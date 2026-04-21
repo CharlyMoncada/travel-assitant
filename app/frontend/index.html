@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Travel Assistant UI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Travel Assistant</h1>
+    <p>Interfaz mínima para consumir la API del asistente de viaje.</p>
+  </header>
+
+  <section class="panel">
+    <button id="statusButton">Ver estado</button>
+    <button id="expensesButton">Ver gastos</button>
+    <button id="remindersButton">Ver recordatorios</button>
+    <button id="toolsButton">Ver herramientas MCP</button>
+  </section>
+
+  <section class="panel">
+    <label for="messageInput">Enviar mensaje a `/message`</label>
+    <textarea id="messageInput" rows="3" placeholder="Escribe aquí tu mensaje..."></textarea>
+    <button id="sendMessageButton">Enviar mensaje</button>
+  </section>
+
+  <section class="panel">
+    <label for="executeInput">Ejecutar herramienta MCP</label>
+    <input id="executeInput" type="text" placeholder="Anota 20€ en taxi" />
+    <button id="executeButton">Ejecutar MCP</button>
+  </section>
+
+  <section class="panel">
+    <label for="llmInput">Probar LLM sin filtro</label>
+    <input id="llmInput" type="text" placeholder="Recuerdame hacer el check out mañana a las 20hs" />
+    <button id="llmButton">Probar LLM</button>
+  </section>
+
+  <section class="results">
+    <h2>Resultado</h2>
+    <pre id="resultOutput">Presiona un botón para ver los datos.</pre>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
