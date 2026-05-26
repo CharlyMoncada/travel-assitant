@@ -8,3 +8,10 @@ sentence-transformers
 python-telegram-bot
 openai
 pdfplumber
+langchain
+langchain-openai
+langgraph
+langgraph-checkpoint
+mcp
+httpx
+

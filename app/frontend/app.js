@@ -1,6 +1,13 @@
 const resultOutput = document.getElementById('resultOutput');
 const messageInput = document.getElementById('messageInput');
-const executeInput = document.getElementById('executeInput');
+
+
+// Get or create a session_id in localStorage to maintain session state
+let sessionId = localStorage.getItem('travel_assistant_session_id');
+if (!sessionId) {
+  sessionId = 'session_' + Math.random().toString(36).substring(2, 11);
+  localStorage.setItem('travel_assistant_session_id', sessionId);
+}
 
 const setResult = (data) => {
   resultOutput.textContent = JSON.stringify(data, null, 2);
@@ -32,38 +39,12 @@ document.getElementById('toolsButton').addEventListener('click', () => {
 document.getElementById('sendMessageButton').addEventListener('click', async () => {
   const text = messageInput.value.trim();
   if (!text) {
-    setResult({ error: 'Escribe un mensaje antes de enviar.' });
+    setResult({ error: 'Write a message before sending.' });
     return;
   }
   await requestJson('/message', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  });
-});
-
-document.getElementById('executeButton').addEventListener('click', async () => {
-  const text = executeInput.value.trim();
-  if (!text) {
-    setResult({ error: 'Escribe una entrada para MCP antes de ejecutar.' });
-    return;
-  }
-  await requestJson('/mcp/execute', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
-  });
-});
-
-document.getElementById('llmButton').addEventListener('click', async () => {
-  const text = document.getElementById('llmInput').value.trim();
-  if (!text) {
-    setResult({ error: 'Escribe un mensaje para probar el LLM.' });
-    return;
-  }
-  await requestJson('/llm/test', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, thread_id: sessionId }),
   });
 });

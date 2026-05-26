@@ -140,8 +140,8 @@ def query_normative_documents(query: str, n_results: int = 3) -> Tuple[str, List
     metadatas = results.get("metadatas", [[]])[0]
     if not documents:
         return (
-            "No se encontró documentación específica en este prototipo. "
-            "En la siguiente iteración se añadirá más contenido y una lógica de generación completa.",
+            "No specific documentation was found in this prototype. "
+            "In the next iteration, more content and complete generation logic will be added.",
             [],
         )
 

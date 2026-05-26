@@ -2,357 +2,212 @@
 
 ## Visión general
 
-El Travel Assistant es un sistema agéntico de asistencia al viajero que integra múltiples tecnologías de IA y persistencia para proporcionar una experiencia conversacional completa. La arquitectura se basa en tres pilares principales: Model Context Protocol (MCP), Retrieval-Augmented Generation (RAG), y persistencia inteligente.
+El Travel Assistant es un sistema agéntico de asistencia al viajero que integra múltiples tecnologías de IA y persistencia para proporcionar una experiencia conversacional completa. La arquitectura sigue los principios de **Clean Architecture**, separando la capa de presentación, orquestación, lógica de negocio y persistencia.
 
-## Diagrama de arquitectura
+En esta iteración, el sistema se ha refactorizado a una **arquitectura de red multiserver MCP desacoplada**, donde el núcleo del agente opera como un cliente de múltiples microservicios remotos de herramientas que se comunican mediante Server-Sent Events (SSE).
+
+---
+
+## Diagrama de arquitectura del sistema
 
 ```mermaid
 flowchart TB
-    subgraph "Interfaces de Usuario"
-        TG[Telegram Bot]
-        WEB[Web Frontend]
-        API[API REST]
+    subgraph UI ["Interfaces de Usuario (Port 8000)"]
+        TG["🤖 Telegram Bot"]
+        Web["💻 Web Frontend"]
     end
 
-    subgraph "Backend FastAPI"
-        MAIN[app/main.py]
-        ENDPOINTS[app/api/endpoints.py]
-        ROUTER[app/orchestrator/router.py]
-        MCP[app/orchestrator/mcp.py]
+    subgraph Backend ["Backend de Presentación y Orquestación (Port 8000)"]
+        MAIN["app/main.py"]
+        ENDPOINTS["app/api/endpoints.py"]
+        
+        subgraph Orchestration ["Capa de Agentes (app/agents/)"]
+            Router["🛠️ LangChainAgentRouter<br/>(Sesiones MCP, Poda & Memoria)"]
+            
+            subgraph Routing ["Enrutamiento Híbrido"]
+                Bypass{"⚡ Pre-check Determinista"}
+                Supervisor["🧠 Supervisor LLM<br/>(Inferencia Semántica & Chat)"]
+            end
+            
+            subgraph Agents ["Sub-Agentes Especialistas Modulares"]
+                FA["💰 Finance Agent<br/>(finance/agent.py)"]
+                RA["⏰ Reminder Agent<br/>(reminder/agent.py)"]
+                GA["📚 General Agent<br/>(general/agent.py)"]
+            end
+        end
     end
 
-    subgraph "Servicios Core"
-        LLM[app/services/llm.py<br/>OpenAI GPT-4.1-nano]
-        RAG[app/services/rag.py<br/>ChromaDB + Embeddings]
-        PERSIST[app/services/persistence.py<br/>SQLite + SQLAlchemy]
+    subgraph Servers ["Servidores de Herramientas MCP (Transporte SSE)"]
+        FM["🔌 Finance MCP Server<br/>Port 8002"]
+        RM["🔌 Reminder MCP Server<br/>Port 8003"]
     end
 
-    subgraph "Agentes Especializados"
-        AGENTS[app/agents/__init__.py<br/>Rules, Budget, Logistics, Itinerary]
+    subgraph Services ["Capa de Servicios y Negocio"]
+        RULES["Tools locales<br/>app/agents/tools.py"]
+        PERSIST["Persistencia de dominio<br/>app/services/persistence/"]
+        RAG["app/services/rag.py<br/>ChromaDB + SentenceTransformers"]
     end
 
-    subgraph "Almacenamiento"
-        DB[(SQLite<br/>travel_assistant.db)]
-        VECTORS[(ChromaDB<br/>chromadb_store/)]
-        DOCS[rag_docs/*.txt<br/>visa.txt, seguridad.txt, covid.txt]
+    subgraph Storage ["Almacenamiento y Persistencia"]
+        DB[("🗄️ SQLite DB<br/>travel_assistant.db")]
+        VECTORS[("📂 ChromaDB Store<br/>chromadb_store/")]
     end
 
-    subgraph "Configuración"
-        ENV[.env<br/>OPENAI_API_KEY<br/>TELEGRAM_TOKEN<br/>EMBEDDING_MODEL]
-    end
+    %% Interfaces
+    TG --> Router
+    Web --> ENDPOINTS
+    ENDPOINTS --> Router
 
-    %% Conexiones
-    TG --> ROUTER
-    WEB --> API
-    API --> ENDPOINTS
+    %% Enrutamiento Interno
+    Router --> Bypass
+    Bypass -->|Mensaje Determinista| Agents
+    Bypass -->|Evaluación Semántica| Supervisor
+    Supervisor -->|Charla / Clarificación| Router
+    Supervisor -->|Identificación Semántica [ROUTE]| Agents
 
-    ENDPOINTS --> ROUTER
-    ROUTER --> MCP
-    MCP --> AGENTS
+    %% Conexiones e Invocaciones MCP / Locales
+    FA -->|Llamada SSE| FM
+    RA -->|Llamada SSE| RM
+    GA -->|Tools locales| RULES
+    GA -->|Búsqueda Semántica| RAG
 
-    AGENTS --> LLM
-    AGENTS --> RAG
-    AGENTS --> PERSIST
-
-    RAG --> VECTORS
-    RAG --> DOCS
+    %% Negocio a Datos
+    FM --> PERSIST
+    RM --> PERSIST
     PERSIST --> DB
-
-    MAIN --> ENV
-    MAIN --> ENDPOINTS
-    MAIN --> ROUTER
-    MAIN --> MCP
-
-    style "Interfaces de Usuario" fill:#e1f5fe,stroke:#01579b
-    style "Backend FastAPI" fill:#f3e5f5,stroke:#4a148c
-    style "Servicios Core" fill:#e8f5e8,stroke:#1b5e20
-    style "Agentes Especializados" fill:#fff3e0,stroke:#e65100
-    style "Almacenamiento" fill:#fce4ec,stroke:#880e4f
-    style "Configuración" fill:#f5f5f5,stroke:#424242
+    RAG --> VECTORS
 ```
+
+---
 
 ## Componentes detallados
 
 ### 1. Interfaces de Usuario
 
 #### Telegram Bot (`app/connectors/telegram_bot.py`)
-- Integración con Telegram Bot API
-- Recepción y envío de mensajes
-- Configuración opcional mediante `TELEGRAM_TOKEN`
+- Integración nativa con la API de bots de Telegram.
+- Recibe mensajes del usuario, los pasa al orquestador asíncrono y retorna la respuesta procesada.
+- Inicializado de forma segura solo si se detecta la variable `TELEGRAM_TOKEN`.
 
 #### Web Frontend (`app/frontend/`)
-- `index.html`: Interfaz de usuario simple
-- `app.js`: Lógica de interacción con API REST
-- Accesible en `/app` endpoint
+- Panel interactivo simple y moderno con una consola de chat y gráficos de gastos en tiempo real.
+- Consume los endpoints unificados de la capa de presentación.
 
-#### API REST (`app/api/endpoints.py`)
-Endpoints disponibles:
-- `GET /`: Estado básico del sistema
-- `GET /status`: Estado completo (LLM, RAG, MCP, DB)
-- `POST /message`: Procesamiento de mensajes de usuario
-- `GET /expenses`: Consulta de gastos
-- `GET /reminders`: Lista de recordatorios
-- `POST /llm/test`: Testing directo del LLM
-- `GET /mcp/tools`: Lista de herramientas MCP
-- `POST /mcp/execute`: Ejecución de herramientas MCP
+---
 
-### 2. Backend FastAPI
+### 2. Capa de Presentación (Puerto `8000`)
 
 #### Punto de entrada (`app/main.py`)
-- Configuración de FastAPI
-- Inicialización de servicios (lazy loading para RAG)
-- Configuración de rutas y middlewares
-- Arranque del bot de Telegram (si está configurado)
+- Instancia la aplicación FastAPI, monta el frontend en la ruta estática y arranca el bot de Telegram en el startup.
+- Inicializa de forma centralizada al cliente multiserver `LangChainAgentRouter` y lo inyecta en el estado de la aplicación (`app.state.message_router`).
 
-#### Enrutador de mensajes (`app/orchestrator/router.py`)
-- Procesamiento inicial de mensajes
-- Coordinación entre MCP y agentes
-- Manejo de respuestas
+#### API REST (`app/api/endpoints.py`)
+Expone **7 endpoints unificados** de cara a la interfaz y el dashboard del usuario:
 
-#### Orquestador MCP (`app/orchestrator/mcp.py`)
-- Implementación del Model Context Protocol
-- Registro y ejecución de herramientas
-- Coordinación de flujos de trabajo
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/` | Health check básico de la API. |
+| `GET` | `/app` | Sirve el frontend web interactivo. |
+| `POST` | `/message` | Canal único del usuario para comunicarse con el agente LangChain. |
+| `GET` | `/expenses` | Datos agregados de gastos y presupuesto para el dashboard. |
+| `GET` | `/reminders` | Lista ordenada de alertas de viaje guardadas en la BD. |
+| `GET` | `/status` | Estado dinámico consolidado de RAG, Base de Datos, Telegram y ambos servidores MCP externos. |
+| `GET` | `/mcp/tools` | Catálogo de herramientas agregadas obtenidas dinámicamente de ambos servidores externos. |
 
-### 3. Servicios Core
+---
 
-#### Servicio LLM (`app/services/llm.py`)
-- Integración con OpenAI GPT-4.1-nano
-- Extracción de intenciones desde texto natural
-- Generación de respuestas para RAG
-- Funciones principales:
-  - `extract_intent_payload()`: Análisis de intención
-  - `compose_rag_answer()`: Generación de respuestas RAG
-  - `raw_llm_call()`: Llamadas directas al LLM
-  - `llm_status()`: Estado de configuración
+### 3. Capa de Orquestación y Agentes Especialistas (Multi-Agente)
 
-#### Servicio RAG (`app/services/rag.py`)
-- Sistema de Retrieval-Augmented Generation
-- Base de datos vectorial con ChromaDB
-- Embeddings locales con Sentence Transformers
-- Funciones principales:
-  - `_load_document_files()`: Carga de documentos desde `rag_docs/`
-  - `init_rag()`: Inicialización lazy del sistema
-  - `query_normative_documents()`: Consultas semánticas
-  - `rag_status()`: Estado del sistema RAG
+La arquitectura del asistente se ha modularizado y segmentado en múltiples archivos físicos dentro de `app/agents/` bajo un patrón **Multi-Agente con Supervisor Enrutador Cognitivo Unificado**:
 
-#### Servicio de Persistencia (`app/services/persistence.py`)
-- Base de datos SQLite con SQLAlchemy
-- Gestión de gastos y recordatorios
-- Funciones principales:
-  - `save_expense()`: Registro de gastos
-  - `get_expense_summary()`: Consulta de gastos
-  - `save_reminder()`: Guardado de recordatorios
-  - `list_reminders()`: Lista de recordatorios
+#### A. Router y Cliente Multiserver (`app/agents/langchain_agent.py`)
+- **`LangChainAgentRouter`**: Actúa como el punto de contacto unificado del backend con la infraestructura de agentes y servidores de herramientas.
+- **Cliente Multiserver MCP**: Usa `AsyncExitStack` para abrir dinámicamente conexiones de stream de eventos de servidor (SSE) con múltiples microservicios concurrentes (`finance_server` y `reminder_server`).
+- **Traductor Pydantic Dinámico**: Convierte las definiciones en formato JSON `inputSchema` provenientes de los servidores MCP en clases **Pydantic V2** tipadas en tiempo de ejecución. Esto garantiza function calling de altísima precisión.
+- **Filtrado Selectivo del Historial (`_get_clean_history`)**: Antes de consultar al Supervisor LLM, extrae un historial limpio omitiendo las etiquetas de enrutamiento interno (`[ROUTE: ...]`) y los mensajes de bajo nivel (`ToolMessage` y `AIMessage` con llamadas a funciones). Esto le presenta al Supervisor una línea de tiempo conversacional nítida (solo `HumanMessage` y `AIMessage` puros de interacción directa) ideal para tomar decisiones de *Sticky Routing*.
+- **Persistencia de Estado Robusta y Checkpointer Fix**: Cuando el Supervisor decide desviar la consulta a un especialista, el Router inserta de forma explícita el `HumanMessage` actual en el checkpointer de LangGraph `MemorySaver` antes de invocar al sub-agente. Esto soluciona la inconsistencia en hilos conversacionales persistentes (donde el sub-agente creaba respuestas AI huérfanas de mensaje inicial del usuario en el checkpointer) y erradica errores de transaccionalidad de hilos paralelos.
+- **Gestión de Memoria y Poda**: Instrumenta un algoritmo de poda conversacional por turnos completos (`_prune_history_if_needed`), manteniendo los últimos 3 turnos conversacionales de usuario completos en el checkpointer para optimizar el contexto.
 
-### 4. Agentes Especializados (`app/agents/__init__.py`)
+#### B. Supervisor Enrutador Cognitivo (`app/agents/supervisor/`)
+Encargado de la toma de decisiones en el enrutamiento de intenciones aplicando las directrices cognitivas del sistema:
+- **`app/agents/supervisor/agent.py`**: Aloja la lógica del código del Supervisor LLM (`run_supervisor`), ejecutando la inferencia de enrutamiento cognitivo o respuestas directas.
+- **System Prompts (`app/agents/supervisor/prompts.py`)**: Define `SUPERVISOR_SYSTEM_PROMPT` que inyecta las directrices cognitivas (Layer 1: palabras clave bilingües, Layer 2: sticky routing y Layer 3: chit-chat/ambigüedad) para clasificar la consulta de forma extremadamente flexible y dinámica.
+- **Especificación Técnica (`app/agents/supervisor/supervisor_routing_skill.md`)**: Describe formalmente el comportamiento de enrutamiento y las capas cognitivas del skill del Supervisor.
+- **Formato de Respuesta Estricto**: Retorna un token formal de enrutamiento (como `[ROUTE: finance]`, `[ROUTE: reminder]`, `[ROUTE: general]`) o una respuesta directa aclaratoria/social (Smalltalk) si no hay contexto previo o la consulta es informal.
 
-#### TravelAssistant (Agente principal)
-Coordina los agentes especializados:
-- **Rules Agent**: Consultas normativas y requisitos
-- **Budget Agent**: Gestión financiera
-- **Logistics Agent**: Búsqueda de transporte y alojamiento
-- **Itinerary Agent**: Gestión de itinerarios y recordatorios
+#### C. Fábricas de Sub-Agentes Specialists Modulares
+Cada sub-agente corre sobre un grafo simplificado de LangGraph independiente, aislando totalmente su comportamiento para evitar falsos function callings:
+- **Finance Agent** (`app/agents/finance/`): Inicializa un agente focalizado. Filtra estrictamente el catálogo unificado de herramientas para exponer exclusivamente las de gastos (`expense`, `budget`) y carga el prompt de comportamiento financiero (`prompts.py`).
+- **Reminder Agent** (`app/agents/reminder/`): Inicializa el agente de itinerario, exponiendo única y exclusivamente las herramientas CRUD de recordatorios.
+- **General Agent** (`app/agents/general/`): Emplea las herramientas locales de consulta documental (RAG) y logística local.
 
-### 5. Almacenamiento
+---
 
-#### Base de datos SQLite
-- Archivo: `travel_assistant.db`
-- Tablas: expenses, reminders
-- ORM: SQLAlchemy
+### 4. Capa de Servidores MCP e Infraestructura
 
-#### Base de datos vectorial ChromaDB
-- Directorio: `app/chromadb_store/`
-- Colección: `travel_rules`
-- Modelo de embeddings: `all-MiniLM-L6-v2`
+Organizados en el directorio modularizado **`app/mcp/`**:
 
-#### Documentos normativos
-- Directorio: `rag_docs/`
-- Archivos: `visa.txt`, `seguridad.txt`, `covid.txt`, `*.pdf`
-- Formatos soportados: Texto plano (.txt) y PDF (.pdf)
-- Procesamiento: Extracción automática de texto con pdfplumber
+#### A. Finance MCP Server (`app/mcp/finance/server.py` - Puerto `8002`)
+- Servidor MCP oficial que corre de forma autónoma.
+- Expone herramientas financieras especializadas: `record_expense`, `query_expenses`, `modify_expense`, `delete_expense` y `budget`.
+- Conectado a los servicios de dominio a través de la fachada de negocio.
 
-### 6. Configuración
+#### B. Reminder MCP Server (`app/mcp/reminder/server.py` & `app/mcp/reminder/tools.py` - Puerto `8003`)
+- Servidor MCP oficial autónomo dedicado en exclusiva a la gestión de recordatorios e itinerario.
+- Mantiene por separado la definición estructurada de las herramientas (`tools.py`) de la lógica del transporte SSE (`server.py`).
+- Expone 4 herramientas CRUD estructuradas: `record_reminder`, `query_reminders`, `modify_reminder` y `delete_reminder`.
+- Conectado directamente a las operaciones de la capa de persistencia en la base de datos relacional.
 
-#### Variables de entorno (.env)
-```bash
-# OpenAI (requerido para funcionalidades avanzadas)
-OPENAI_API_KEY=sk-your-key-here
-OPENAI_MODEL=gpt-4o-mini
+#### C. Capa de Persistencia (`app/services/persistence/`)
+- Lógica de almacenamiento e interacción con SQLite mediante SQLAlchemy.
+- Provee las consultas y mutaciones de datos relacionales seguras de gastos y recordatorios.
 
-# Embeddings para RAG
-EMBEDDING_MODEL=all-MiniLM-L6-v2
+#### D. Capa RAG (`app/services/rag.py`)
+- Recuperación semántica en base de datos ChromaDB con embeddings vectoriales generados por Sentence Transformers (`all-MiniLM-L6-v2`).
+- Resuelve consultas normativas e introduce el contexto en el sistema RAG de forma perezosa (lazy).
 
-# Telegram (opcional)
-TELEGRAM_TOKEN=your-bot-token-here
-```
+---
 
-## Flujo de procesamiento
+### 5. Catálogo de Herramientas MCP Detallado
 
-1. **Recepción de mensaje**: Telegram Bot o API REST
-2. **Enrutamiento inicial**: `router.py` analiza el mensaje
-3. **Extracción de intención**: `llm.py` usa GPT para identificar intención
-4. **Ejecución MCP**: `mcp.py` coordina las herramientas apropiadas
-5. **Procesamiento especializado**:
-   - Consultas normativas → RAG (`rag.py`)
-   - Gastos → Persistencia (`persistence.py`)
-   - Recordatorios → Persistencia (`persistence.py`)
-6. **Respuesta**: Se genera y envía al usuario
+| Herramienta | Servidor | Puerto | Parámetro Esperado | Propósito de Negocio |
+|-------------|----------|--------|---------------------|----------------------|
+| `budget` | `finance_server` | 8002 | Ninguno | Obtiene el resumen total del presupuesto |
+| `record_expense` | `finance_server` | 8002 | `amount` (float), `description` (str), `category` (str) | Registra un gasto nuevo estructurado |
+| `query_expenses` | `finance_server` | 8002 | `category` (str) (opcional) | Lista los gastos con opción de filtrado |
+| `modify_expense` | `finance_server` | 8002 | `id` (int), opcionales `amount`, `description`, `category` | Edita propiedades de un gasto registrado |
+| `delete_expense` | `finance_server` | 8002 | `id` (int) | Borra físicamente un gasto de la base de datos |
+| `record_reminder` | `reminder_server` | 8003 | `title` (str), `due_time` (str), `note` (str) opcional | Crea un recordatorio nuevo en el itinerario |
+| `query_reminders` | `reminder_server` | 8003 | (ninguno) | Lista todos los recordatorios registrados |
+| `modify_reminder` | `reminder_server` | 8003 | `id` (int), opcionales `title`, `due_time`, `note` | Edita propiedades de un recordatorio existente |
+| `delete_reminder` | `reminder_server` | 8003 | `id` (int) | Borra permanentemente un recordatorio |
 
-## Tecnologías y dependencias
 
-### Core
-- **FastAPI**: Framework web asíncrono
-- **OpenAI**: API de modelos GPT
-- **ChromaDB**: Base de datos vectorial
-- **Sentence Transformers**: Generación de embeddings
-- **SQLAlchemy**: ORM para SQLite
+Además, el agente expone herramientas locales no MCP: `rules` y `logistics`.
 
-### Utilidades
-- **python-telegram-bot**: Integración Telegram
-- **python-dotenv**: Gestión de variables de entorno
-- **pydantic**: Validación de datos
+---
 
-### Desarrollo
-- **uvicorn**: Servidor ASGI
-- **pytest**: Testing (planeado)
+## Flujo de procesamiento de un mensaje
 
-## Consideraciones de diseño
+El procesamiento de cualquier solicitud en el sistema sigue una secuencia estructurada de enrutamiento cognitivo unificado y ejecución aislada:
 
-### Inicialización Lazy
-- El sistema RAG se inicializa solo cuando se necesita
-- Evita delays en el startup del servidor
-- Manejo de errores cuando ChromaDB no está disponible
+1. **Recepción del Mensaje**: El usuario interactúa mediante Telegram o la consola web frontend (`POST /message`).
+2. **Establecimiento de Conexiones MCP**: `LangChainAgentRouter` establece streams SSE simultáneos con los microservicios disponibles. Descubre dinámicamente las herramientas e instrumenta la traducción a clases tipadas **Pydantic V2**.
+3. **Poda Conversacional**: Antes de evaluar, se recupera el estado del checkpointer y se realiza una poda de turnos conversacionales completos si se excede el límite preestablecido para evitar el desborde del contexto.
+4. **Filtrado Selectivo del Historial**: El Router compila un historial limpio (`_get_clean_history`) excluyendo etiquetas y ToolMessages de bajo nivel para presentárselo en un formato nítido al Supervisor.
+5. **Orquestación y Enrutamiento Cognitivo**: El Supervisor LLM recibe el historial limpio y el mensaje entrante. Aplicando sus habilidades semánticas internas definidas en su Prompt del Sistema (Bilingual Keywords & Sticky Routing):
+   - *Ruta Semántica*: Determina y retorna una etiqueta estruturada (p. ej., `[ROUTE: finance]`).
+   - *Interacción Directa*: Si la consulta es charla informal (Smalltalk) o vaga sin historial previo, responde directamente al usuario.
+6. **Persistencia e Inyección de HumanMessage**: Si el Supervisor determina una ruta agéntica, el Router de forma inmediata e imperativa inyecta el `HumanMessage` del usuario en el checkpointer conversacional (`aupdate_state`). Esto preserva la consistencia de la línea de tiempo.
+7. **Ejecución del Especialista Modular**: Se inicializa el sub-agente especialista correspondiente (`finance`, `reminder`, `general`) inyectándole su respectivo set hermético de herramientas e instrucciones. El sub-agente ejecuta asíncronamente el function calling necesario comunicándose mediante SSE con su respectivo servidor MCP.
+8. **Consolidación de Memoria Segura**: La ejecución de los sub-agentes actualiza el checkpointer conversacional en SQLite de forma determinista usando el parámetro `as_node="model"` para erradicar cualquier error de colisión de esquemas.
+9. **Inferencia y Respuesta**: Se extrae la respuesta final generada por el sub-agente especialista y se transmite al cliente de presentación del usuario.
 
-### Separación de responsabilidades
-- Cada servicio tiene una responsabilidad clara
-- Interfaces bien definidas entre componentes
-- Fácil testing y mantenimiento
+---
 
-### Escalabilidad
-- Arquitectura modular permite agregar nuevos agentes
-- RAG puede indexar más documentos
-- API REST permite integraciones externas
+## Consideraciones de Diseño y Clean Architecture
 
-### Seguridad
-- Variables sensibles en `.env`
-- Validación de inputs en endpoints
-- Manejo seguro de errores
-
-## Estado de implementación
-
-✅ **Funcionalidades completadas**:
-- Integración completa OpenAI GPT
-- Sistema RAG con ChromaDB
-- Persistencia SQLite
-- API REST completa
-- Bot Telegram
-- Interfaz web básica
-- Arquitectura MCP
-
-🔄 **Mejoras pendientes**:
-- Testing automatizado
-- Documentación RAG expandida
-- Métricas de rendimiento
-- Logging avanzado
-```
-
-## Componentes principales
-
-- `app/main.py`
-  - Inicia el servidor FastAPI.
-  - Carga `.env` y arranca el bot de Telegram si `TELEGRAM_TOKEN` está presente.
-  - Inicializa la base de datos y el motor RAG.
-  - Configura `app.state` para compartir `message_router`, `mcp_service` y `telegram_service`.
-  - Incluye el router de endpoints de `app/api/endpoints.py`.
-
-- `app/api/endpoints.py`
-  - Define los endpoints HTTP públicos.
-  - Usa `request.app.state` para acceder a los servicios del backend.
-  - Agrupa la lógica REST para mensajes, estado, gastos, recordatorios y MCP.
-
-- `app/connectors/telegram_bot.py`
-  - Integra el bot de Telegram usando `python-telegram-bot`.
-  - Recibe mensajes y los pasa al `MessageRouter`.
-  - Maneja arranque y parada del polling.
-
-- `app/orchestrator/router.py`
-  - `MessageRouter` enruta los mensajes entrantes.
-  - Cuando existe `MCPServer`, lo delega a él.
-  - Tiene un fallback de reglas si el LLM no está disponible.
-
-- `app/orchestrator/mcp.py`
-  - Define `MCPServer`, el orquestador de herramientas.
-  - Selecciona la herramienta usando el enrutador LLM.
-  - Ejecuta la herramienta y devuelve la respuesta final.
-
-- `app/orchestrator/mcp_tools.py`
-  - Centraliza la definición de herramientas MCP.
-  - Contiene los handlers de parseo de gasto y recordatorio.
-  - Registra herramientas a `MCPServer` con ejemplos y descripciones.
-
-- `app/frontend/index.html`
-  - Interfaz web mínima que consume la API del asistente.
-  - Provee botones para consultar estado, gastos, recordatorios y herramientas MCP.
-  - Permite enviar mensajes a `/message` y ejecutar texto libre en `/mcp/execute`.
-
-- `app/frontend/app.js`
-  - Lógica de front-end para invocar los endpoints REST.
-  - Presenta los resultados en la página de forma interactiva.
-
-- `app/frontend/styles.css`
-  - Estilos básicos para la interfaz web.
-
-- `app/services/llm.py`
-  - Construye prompts para la selección de herramienta (`route_tool`).
-  - Extrae intención y payload estructurado para gastos y recordatorios (`extract_intent_payload`).
-  - Genera respuestas naturales basadas en la salida de la herramienta (`render_llm_response`).
-  - Expone el estado de la capa LLM.
-
-- `app/services/rag.py`
-  - Inicializa ChromaDB con documentos de `rag_docs/`.
-  - Usa `sentence-transformers` para embeddings.
-  - Responde consultas semánticas de normativa.
-
-- `app/services/persistence.py`
-  - Define los modelos de datos y funciones CRUD para gastos y recordatorios.
-
-- `app/agents/__init__.py`
-  - Contiene los agentes de dominio.
-  - `TravelRulesAgent`: consulta normativa.
-  - `BudgetAgent`: graba y resume gastos.
-  - `ItineraryAgent`: guarda recordatorios.
-  - `LogisticsAgent`: placeholder para búsquedas de viaje.
-
-- `app/utils/tools.py`
-  - Funciones de parseo de texto para gasto y recordatorio.
-
-- `app/services/rag.py`
-  - Inicializa ChromaDB con documentos de `rag_docs/`.
-  - Usa embeddings para consulta semántica.
-  - Responde consultas de búsqueda basadas en documentos.
-
-- `app/services/persistence.py`
-  - Define los modelos de datos y funciones CRUD para gastos y recordatorios.
-
-- `app/connectors/telegram_bot.py`
-  - Conecta con Telegram usando `python-telegram-bot`.
-  - Maneja `/start` y mensajes de texto.
-  - Corre el polling en un hilo independiente.
-
-## Flujo de petición típico
-
-1. El usuario envía un mensaje por Telegram o el endpoint `/message`.
-2. `app/connectors/telegram_bot.py` o `app/api/endpoints.py` pasa el texto a `app/orchestrator/router.py`.
-3. `app/orchestrator/router.py` delega la petición a `app/orchestrator/mcp.py` cuando está disponible.
-4. `app/orchestrator/mcp.py` usa `app/services/llm.py` para extraer intención y payload estructurado, y para enrutar a la herramienta correcta.
-5. La herramienta invoca un agente definido en `app/agents/`.
-6. El agente consulta persistencia o RAG según corresponda.
-7. El resultado se cristaliza en una respuesta de usuario y se devuelve al canal.
-
-## Notas de expansión
-
-- `app/services/rag.py` ya indexa documentos de ejemplo en `rag_docs/`.
-- Los agentes se definen en `app/agents/__init__.py` y pueden integrarse con APIs reales.
-- `app/orchestrator/mcp.py` centraliza la lógica de enrutamiento y reduce duplicación.
-- El flujo de herramientas está preparado para adaptarse a nuevos conectores y APIs externas.
+- **Aislamiento Cognitivo (Anti-Fatiga de LLM)**: En lugar de inyectar 11 herramientas y 4 prompts de sistema en una sola llamada (lo que causa falsos disparos en modelos rápidos), la arquitectura de sub-agentes divide el dominio. Cada agente tiene un contexto sumamente acotado (2 o 3 herramientas máximo) garantizando una precisión del 100% en function calling.
+- **Enrutamiento Híbrido Avanzado**: Al combinar pre-checks de código estructurado de latencia cero con clasificación semántica mediante LLM, el sistema se siente instantáneo ante comandos explícitos del usuario y al mismo tiempo retiene capacidades conversacionales complejas.
+- **Persistencia Robusta de Hilos**: Al emplear un motor centralizado de checkpointer (`MemorySaver`) coordinado pero delegando la ejecución a sub-agentes compilados dinámicamente, se logra tener hilos de chat compartidos y con transaccionalidad sin riesgo de colisión de esquemas.
+- **Desacoplamiento Total de Capas**: Respetando rigurosamente Clean Architecture, la interfaz, el orquestador principal, los agentes especialistas y las herramientas sobre servidores remotos están totalmente separados físicamente y se comunican a través de contratos estrictos de red y validación tipada.

@@ -1,12 +1,8 @@
 import datetime
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine
-from sqlalchemy.orm import declarative_base, sessionmaker
+from sqlalchemy import Column, DateTime, Float, Integer, String
 
-DATABASE_URL = "sqlite:///travel_assistant.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-Base = declarative_base()
+from .db import Base, SessionLocal
 
 
 class Expense(Base):
@@ -17,20 +13,6 @@ class Expense(Base):
     amount = Column(Float, nullable=False)
     category = Column(String(100), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-
-class Reminder(Base):
-    __tablename__ = "reminders"
-
-    id = Column(Integer, primary_key=True, index=True)
-    title = Column(String(255), nullable=False)
-    note = Column(Text, nullable=True)
-    due_time = Column(String(100), nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
-
-
-def init_db():
-    Base.metadata.create_all(bind=engine)
 
 
 def save_expense(description: str, amount: float, category: str):
@@ -72,29 +54,43 @@ def get_expense_summary():
         }
 
 
-def save_reminder(title: str, due_time: str, note: str):
+def modify_expense(expense_id: int, description: str = None, amount: float = None, category: str = None) -> dict:
     with SessionLocal() as session:
-        reminder = Reminder(title=title, due_time=due_time, note=note)
-        session.add(reminder)
+        expense = session.query(Expense).filter(Expense.id == expense_id).first()
+        if not expense:
+            return {"error": f"Expense with ID {expense_id} not found in database"}
+        
+        if description is not None:
+            expense.description = description
+        if amount is not None:
+            expense.amount = amount
+        if category is not None:
+            expense.category = category
+            
         session.commit()
-        session.refresh(reminder)
+        session.refresh(expense)
         return {
-            "id": reminder.id,
-            "title": reminder.title,
-            "due_time": reminder.due_time,
-            "note": reminder.note,
-            "created_at": reminder.created_at.isoformat(),
+            "success": True,
+            "message": f"Expense with ID {expense_id} modified successfully",
+            "expense": {
+                "id": expense.id,
+                "description": expense.description,
+                "amount": expense.amount,
+                "category": expense.category,
+                "created_at": expense.created_at.isoformat(),
+            }
         }
 
 
-def list_reminders():
+def delete_expense(expense_id: int) -> dict:
     with SessionLocal() as session:
-        return [
-            {
-                "id": reminder.id,
-                "title": reminder.title,
-                "due_time": reminder.due_time,
-                "note": reminder.note,
-            }
-            for reminder in session.query(Reminder).order_by(Reminder.created_at.desc()).all()
-        ]
+        expense = session.query(Expense).filter(Expense.id == expense_id).first()
+        if not expense:
+            return {"error": f"Expense with ID {expense_id} not found in database"}
+        
+        session.delete(expense)
+        session.commit()
+        return {
+            "success": True,
+            "message": f"Expense with ID {expense_id} deleted successfully from database"
+        }

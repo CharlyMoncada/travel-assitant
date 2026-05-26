@@ -7,65 +7,91 @@ from dotenv import load_dotenv
 project_root = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=project_root / ".env", override=True)
 
+# Configure root logging to show INFO logs in the console
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+
+
+from contextlib import asynccontextmanager
+import httpx
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from .agents import TravelAssistant
 from .api.endpoints import router as api_router
-from .orchestrator.router import MessageRouter
-from .orchestrator.mcp import MCPServer
-from .services.persistence import init_db
+from .agents.langchain_agent import LangChainAgentRouter
+from .services.persistence.db import init_db
 from .services.rag import init_rag
 from .connectors.telegram_bot import TelegramBotService
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-app = FastAPI(
-    title="Travel Assistant",
-    description="Asistente de viaje Python para pruebas de concepto",
-    version="0.1.0",
-)
-
-frontend_dir = Path(__file__).resolve().parent / "frontend"
-app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
-
-assistant = TravelAssistant()
-mcp_service = MCPServer(assistant)
-router = MessageRouter(assistant, mcp_service=mcp_service)
+router = LangChainAgentRouter()
 telegram_service = None
 logger = logging.getLogger(__name__)
 
-app.state.message_router = router
-app.state.mcp_service = mcp_service
-app.state.telegram_service = None
-app.state.telegram_token = bool(TELEGRAM_TOKEN)
 
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global telegram_service
+    # Startup: initialize DB, RAG, and httpx.AsyncClient
     init_db()
     init_rag()
+    
+    app.state.http_client = httpx.AsyncClient(timeout=3.0)
+    
+    # Pre-connect MCP servers to prevent latency on the first message
+    try:
+        await router.get_sessions()
+    except Exception as exc:
+        logger.warning("Could not pre-connect MCP servers during startup: %s", exc)
+    
     if TELEGRAM_TOKEN:
         telegram_service = TelegramBotService(router, token=TELEGRAM_TOKEN)
         try:
             telegram_service.start()
         except Exception as exc:
-            logger.error("No se pudo iniciar el bot de Telegram", exc_info=exc)
+            logger.error("Could not start Telegram bot", exc_info=exc)
             telegram_service = None
     app.state.telegram_service = telegram_service
-
-app.include_router(api_router)
-
-@app.on_event("shutdown")
-async def shutdown_event():
+    
+    yield
+    
+    # Shutdown: stop Telegram and close httpx.AsyncClient
     if telegram_service:
         telegram_service.stop()
+    await app.state.http_client.aclose()
+    
+    # Cleanly close MCP connections
+    try:
+        await router.stop()
+    except Exception as exc:
+        logger.warning("Error closing persistent MCP connections during shutdown: %s", exc)
+
+
+app = FastAPI(
+    title="Travel Assistant",
+    description="Python Travel Assistant for proof-of-concept tests",
+    version="0.1.0",
+    lifespan=lifespan,
+)
+
+frontend_dir = Path(__file__).resolve().parent / "frontend"
+app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
+
+app.state.message_router = router
+app.state.telegram_service = None
+app.state.telegram_token = bool(TELEGRAM_TOKEN)
+
+app.include_router(api_router)
 
 
 def run():
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    reload = os.getenv("UVICORN_RELOAD", "false").lower() == "true"
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=reload, reload_dirs=["app"] if reload else None)
 
 
 if __name__ == "__main__":

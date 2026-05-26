@@ -2,212 +2,155 @@
 
 ## Descripción
 
-La interfaz web es una aplicación frontend simple desarrollada con HTML5, CSS3 y JavaScript vanilla que permite interactuar con el backend del Travel Assistant a través de su API REST.
+La interfaz web del Travel Assistant es una consola minimalista e intuitiva desarrollada en JavaScript vanilla, HTML5 y CSS3. Su propósito principal es servir como panel interactivo para el control, monitorización y testing rápido de las APIs y capacidades del asistente de viaje (incluyendo el estado de salud, consulta directa de base de datos relacional y comunicación interactiva con el agente multiserver).
 
-## Ubicación de archivos
+---
+
+## Ubicación de los Archivos en la Capa de Frontend
+
+Los archivos estáticos del frontend se localizan en la ruta `/app/frontend/` y son servidos por FastAPI mediante la ruta estática `/static` y el endpoint `/app`:
 
 ```
 app/frontend/
-├── index.html      # Página principal
-└── app.js          # Lógica de interacción
+├── index.html      # Estructura del panel de control y consola de chat
+├── app.js          # Lógica interactiva y llamadas fetch asíncronas
+└── styles.css      # Hoja de estilos mínimos del panel
 ```
 
-## Características
+---
 
-### Funcionalidades disponibles
-- **Estado del sistema**: Visualización del estado de LLM, RAG, MCP y base de datos
-- **Gestión financiera**: Consulta de gastos registrados
-- **Recordatorios**: Lista de recordatorios activos
-- **Testing LLM**: Pruebas directas del modelo de lenguaje
-- **Herramientas MCP**: Lista y ejecución de herramientas disponibles
-- **Mensajería**: Envío de mensajes al sistema de procesamiento
-- **Consulta documental**: Búsqueda en documentos normativos (.txt y .pdf)
+## Características de la Interfaz Real
 
-### Interfaz de usuario
-- Diseño responsive y minimalista
-- Navegación por pestañas
-- Formularios intuitivos
-- Visualización clara de respuestas JSON
-- Indicadores de estado en tiempo real
+### 1. Monitorización en Tiempo Real
+- **Ver Estado (`GET /status`)**: Muestra de forma inmediata un reporte estructurado en JSON sobre el estado del sistema, incluyendo la conectividad del bot de Telegram, el estado de ChromaDB (RAG), el LLM OpenAI, el archivo físico SQLite y el estado particular en línea de ambos servidores MCP desacoplados (puertos 8002 y 8003).
 
-## Endpoints utilizados
+### 2. Acceso Directo de Datos Relacionales
+- **Ver Gastos (`GET /expenses`)**: Consulta en crudo y de manera instantánea el resumen financiero guardado en la base de datos (monto total acumulado, desglose por categorías y transacciones).
+- **Ver Recordatorios (`GET /reminders`)**: Lista la agenda activa del viajero obtenida directamente de SQLite.
 
-### Estado y consultas
-- `GET /status` - Estado completo del sistema
-- `GET /expenses` - Lista de gastos
-- `GET /reminders` - Lista de recordatorios
-- `GET /mcp/tools` - Herramientas MCP disponibles
+### 3. Descubrimiento Dinámico
+- **Ver Herramientas MCP (`GET /mcp/tools`)**: Expone el catálogo rico de herramientas disponibles consultado al vuelo en los servidores de finanzas y recordatorios.
 
-### Acciones
-- `POST /message` - Procesamiento de mensajes de usuario
-- `POST /llm/test` - Testing directo del LLM
-- `POST /mcp/execute` - Ejecución de herramientas MCP
+### 4. Consola del Agente
+- **Enviar Mensaje (`POST /message`)**: Permite entablar diálogos e instruir comandos al asistente. Genera un identificador de sesión único (`session_id`) autogestionado en el `localStorage` del navegador, garantizando que el checkpointer conversacional mantenga la memoria consistente entre turnos.
 
-## Estructura del código
+---
 
-### index.html
+## Endpoints Consumidos por la Interfaz
+
+La aplicación se comunica de forma asíncrona con el backend mediante las siguientes rutas:
+
+| Método | Endpoint | Payload esperado | Propósito de Uso |
+| :--- | :--- | :--- | :--- |
+| **`GET`** | `/status` | *(Ninguno)* | Obtener estado de salud y telemetría de submódulos. |
+| **`GET`** | `/expenses` | *(Ninguno)* | Obtener el sumario financiero actual. |
+| **`GET`** | `/reminders` | *(Ninguno)* | Listar tareas e itinerario de viaje. |
+| **`GET`** | `/mcp/tools` | *(Ninguno)* | Listar herramientas MCP cargadas dinámicamente. |
+| **`POST`** | `/message` | `{"text": "...", "thread_id": "..."}` | Enviar mensaje al agente persistiendo el hilo de conversación. |
+
+---
+
+## Estructura de Código Real de la Interfaz
+
+### 1. index.html (`app/frontend/index.html`)
+
 ```html
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Travel Assistant</title>
-    <style>
-        /* Estilos CSS inline para simplicidad */
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Travel Assistant UI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
-    <div class="container">
-        <h1>Travel Assistant</h1>
+  <header>
+    <h1>Travel Assistant</h1>
+    <p>Interfaz mínima para consumir la API del asistente de viaje.</p>
+  </header>
 
-        <!-- Navegación por pestañas -->
-        <div class="tabs">
-            <button class="tab-button active" onclick="showTab('status')">Estado</button>
-            <button class="tab-button" onclick="showTab('expenses')">Gastos</button>
-            <button class="tab-button" onclick="showTab('reminders')">Recordatorios</button>
-            <button class="tab-button" onclick="showTab('llm')">Test LLM</button>
-            <button class="tab-button" onclick="showTab('mcp')">MCP Tools</button>
-            <button class="tab-button" onclick="showTab('message')">Mensaje</button>
-        </div>
+  <section class="panel">
+    <button id="statusButton">Ver estado</button>
+    <button id="expensesButton">Ver gastos</button>
+    <button id="remindersButton">Ver recordatorios</button>
+    <button id="toolsButton">Ver herramientas MCP</button>
+  </section>
 
-        <!-- Contenido de las pestañas -->
-        <div id="status" class="tab-content active">
-            <!-- Estado del sistema -->
-        </div>
+  <section class="panel">
+    <label for="messageInput">Enviar mensaje a `/message`</label>
+    <textarea id="messageInput" rows="3" placeholder="Escribe aquí tu mensaje..."></textarea>
+    <button id="sendMessageButton">Enviar mensaje</button>
+  </section>
 
-        <div id="expenses" class="tab-content">
-            <!-- Gestión de gastos -->
-        </div>
+  <section class="results">
+    <h2>Resultado</h2>
+    <pre id="resultOutput">Presiona un botón para ver los datos.</pre>
+  </section>
 
-        <!-- Más pestañas... -->
-    </div>
-
-    <script src="app.js"></script>
+  <script src="/static/app.js"></script>
 </body>
 </html>
 ```
 
-### app.js - Funciones principales
+### 2. app.js (`app/frontend/app.js`)
 
-#### Gestión de pestañas
 ```javascript
-function showTab(tabName) {
-    // Ocultar todas las pestañas
-    const tabs = document.querySelectorAll('.tab-content');
-    tabs.forEach(tab => tab.classList.remove('active'));
+const resultOutput = document.getElementById('resultOutput');
+const messageInput = document.getElementById('messageInput');
 
-    // Mostrar la pestaña seleccionada
-    const selectedTab = document.getElementById(tabName);
-    selectedTab.classList.add('active');
-
-    // Actualizar botones de pestaña
-    const buttons = document.querySelectorAll('.tab-button');
-    buttons.forEach(button => button.classList.remove('active'));
-    event.target.classList.add('active');
+// Obtener o crear un session_id en localStorage para mantener el estado de la sesión
+let sessionId = localStorage.getItem('travel_assistant_session_id');
+if (!sessionId) {
+  sessionId = 'session_' + Math.random().toString(36).substring(2, 11);
+  localStorage.setItem('travel_assistant_session_id', sessionId);
 }
+
+const setResult = (data) => {
+  resultOutput.textContent = JSON.stringify(data, null, 2);
+};
+
+const requestJson = async (url, options = {}) => {
+  const response = await fetch(url, options);
+  const data = await response.json();
+  setResult(data);
+  return data;
+};
+
+document.getElementById('statusButton').addEventListener('click', () => {
+  requestJson('/status');
+});
+
+document.getElementById('expensesButton').addEventListener('click', () => {
+  requestJson('/expenses');
+});
+
+document.getElementById('remindersButton').addEventListener('click', () => {
+  requestJson('/reminders');
+});
+
+document.getElementById('toolsButton').addEventListener('click', () => {
+  requestJson('/mcp/tools');
+});
+
+document.getElementById('sendMessageButton').addEventListener('click', async () => {
+  const text = messageInput.value.trim();
+  if (!text) {
+    setResult({ error: 'Escribe un mensaje antes de enviar.' });
+    return;
+  }
+  await requestJson('/message', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, thread_id: sessionId }),
+  });
+});
 ```
 
-#### Comunicación con API
-```javascript
-async function apiCall(endpoint, method = 'GET', data = null) {
-    const config = {
-        method: method,
-        headers: {
-            'Content-Type': 'application/json',
-        },
-    };
+---
 
-    if (data) {
-        config.body = JSON.stringify(data);
-    }
+## Flujo de Uso Recomendado en Pruebas
 
-    try {
-        const response = await fetch(endpoint, config);
-        const result = await response.json();
-        return result;
-    } catch (error) {
-        console.error('API call failed:', error);
-        return { error: error.message };
-    }
-}
-```
-
-#### Testing del LLM
-```javascript
-async function testLLM() {
-    const text = document.getElementById('llm-input').value;
-    if (!text.trim()) {
-        alert('Por favor ingresa un texto para testear');
-        return;
-    }
-
-    const result = await apiCall('/llm/test', 'POST', { text: text });
-    displayResult('llm-result', result);
-}
-```
-
-## Flujo de uso
-
-1. **Inicio**: Abrir `http://127.0.0.1:8000/app` en el navegador
-2. **Estado del sistema**: Verificar que todos los servicios estén operativos
-3. **Testing**: Probar funcionalidades individuales
-4. **Interacción**: Enviar mensajes y ver respuestas
-
-## Consideraciones técnicas
-
-### CORS
-- El backend FastAPI maneja automáticamente CORS para desarrollo
-- En producción, configurar CORS apropiadamente
-
-### Seguridad
-- Validación de inputs en el frontend
-- Sanitización de datos antes de envío
-- Manejo seguro de errores
-
-### Rendimiento
-- Llamadas asíncronas para no bloquear la UI
-- Loading indicators para operaciones largas
-- Cache de resultados cuando apropiado
-
-## Testing y debugging
-
-### Consola del navegador
-```javascript
-// Ver estado de la API
-apiCall('/status').then(console.log);
-
-// Test de mensaje
-apiCall('/message', 'POST', { text: 'Hola' }).then(console.log);
-```
-
-### Debugging de red
-- Usar las herramientas de desarrollo del navegador
-- Verificar requests/responses en la pestaña Network
-- Revisar errores en Console
-
-## Limitaciones actuales
-
-- **Interfaz básica**: Diseño minimalista enfocado en funcionalidad
-- **Sin autenticación**: No implementada para este prototipo
-- **Cliente único**: No maneja múltiples usuarios concurrentes
-- **Sin persistencia de sesión**: Estado se pierde al recargar
-
-## Mejoras futuras planificadas
-
-- **UI/UX mejorada**: Diseño más moderno con framework CSS
-- **Autenticación**: Sistema de usuarios
-- **Tiempo real**: WebSockets para actualizaciones live
-- **PWA**: Funcionalidad offline
-- **Testing**: Cobertura de tests automatizados
-- **Documentación**: Guías de usuario detalladas
-
-## Integración con el backend
-
-La interfaz web consume la misma API que el bot de Telegram, asegurando consistencia en la funcionalidad. Todos los endpoints están documentados en la especificación OpenAPI generada automáticamente por FastAPI (disponible en `/docs`).
-
-## Buenas prácticas seguidas
-
-- Separación de capas: API, orquestador, servicios y frontend.
-- Frontend estático sencillo y desacoplado del backend.
-- El backend sirve la app en un único punto de entrada (`/app`) y expone la API REST en rutas separadas.
+1. **Verificación Inicial**: Iniciar los servidores e ingresar a `http://localhost:8000/app` en el navegador.
+2. **Chequeo de Salud**: Presionar **Ver estado** y corroborar que el campo `mcp.online` figure como `true`.
+3. **Consulta de Gastos**: Presionar **Ver gastos** para comprobar la carga de SQLite.
+4. **Envío de Mensajes**: Enviar un mensaje de diálogo conversacional en la consola para comprobar la inferencia semántica del Supervisor LLM y el desvío correcto al agente de especialidad.
