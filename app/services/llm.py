@@ -106,10 +106,15 @@ def compose_rag_answer(query: str, documents: list, metadatas: list) -> str:
     )
 
     prompt = (
-        f"Based on the following relevant documents, answer the following question clearly and concisely.\n\n"
+        "You are a strict RAG answer generator for travel regulations.\n"
+        "Answer ONLY using the provided documents.\n"
+        "Do NOT use external knowledge.\n"
+        "Do NOT infer country-specific requirements unless the documents explicitly mention them.\n"
+        "If the documents do not contain enough specific information, say exactly that.\n"
+        "Reply in the same language as the question.\n\n"
         f"Question: {query}\n\n"
         f"Documents:\n{documents_text}\n\n"
-        f"Answer:"
+        "Answer:"
     )
 
     try:
@@ -117,7 +122,7 @@ def compose_rag_answer(query: str, documents: list, metadatas: list) -> str:
             model=get_openai_model(),
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=500,
-            temperature=0.3,
+            temperature=0.0,
         )
         answer = response.choices[0].message.content.strip()
         sources = ", ".join(m.get("source", "unknown") for m in metadatas if m)

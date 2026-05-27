@@ -21,8 +21,8 @@ EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
 CHUNK_SIZE = 900
 CHUNK_OVERLAP = 150
 UPSERT_BATCH_SIZE = 100
-QUERY_CANDIDATES = 8
-MAX_DISTANCE = 0.70
+QUERY_CANDIDATES = 15
+MAX_DISTANCE = 0.50
 
 PDF_NOISE_PATTERNS = [
     r"\b\d{1,2}/\d{1,2}/\d{2,4},\s+\d{1,2}:\d{2}\s*(?:AM|PM)\b",
@@ -446,10 +446,10 @@ def query_normative_documents(
         max_distance=MAX_DISTANCE,
     )
 
-    if not sources:
+    if sources and sources[0].get("distance") is not None and sources[0]["distance"] > 0.45:
         return (
-            "No encontré contexto suficientemente relevante para responder con seguridad.",
-            [],
+            "No encontré documentación suficientemente específica para responder con seguridad.",
+            sources,
         )
 
     answer = compose_rag_answer(

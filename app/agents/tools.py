@@ -47,7 +47,12 @@ def get_agent_tools() -> list:
     return [
         StructuredTool(
             name="rules",
-            description="Answer queries about travel regulations, visas, and travel documentation.",
+            description=(
+                "MANDATORY tool for answering travel regulation questions. "
+                "Use this for visas, entry requirements, passports, travel documents, COVID rules, "
+                "vaccines, safety advice, country requirements and any normative travel information. "
+                "The final answer must be grounded only on the retrieved RAG documents."
+            ),
             coroutine=make_rules_coroutine(),
             func=lambda **kwargs: "",
             args_schema=RulesSchema,

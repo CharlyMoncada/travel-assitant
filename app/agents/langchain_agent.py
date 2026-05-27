@@ -429,11 +429,7 @@ class LangChainAgentRouter:
             # 6. Flow A: The Supervisor decides to chat directly or ask for clarifications
             if not route:
                 logger.info("The Supervisor assumes direct interaction (chit-chat or clarification). Saving to history.")
-                await temp_agent.aupdate_state(
-                    config, 
-                    {"messages": [HumanMessage(content=message), AIMessage(content=supervisor_text)]},
-                    as_node="model"
-                )
+    
                 return {
                     "llm_used": True,
                     "llm_tool": "supervisor_chat",
