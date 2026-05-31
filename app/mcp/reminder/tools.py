@@ -26,10 +26,15 @@ REMINDER_TOOLS = [
     ),
     types.Tool(
         name="query_reminders",
-        description="Queries and lists all reminders registered in the system, ordered from most recent to oldest.",
+        description="Queries and lists reminders registered in the system. If a date_filter is provided (format: YYYY-MM-DD), returns only reminders scheduled for that specific date. Without a filter, returns all reminders ordered by due time ascending.",
         inputSchema={
             "type": "object",
-            "properties": {}
+            "properties": {
+                "date_filter": {
+                    "type": "string",
+                    "description": "Optional date filter in YYYY-MM-DD format to retrieve only reminders for a specific day. Example: 2026-06-01"
+                }
+            }
         }
     ),
     types.Tool(

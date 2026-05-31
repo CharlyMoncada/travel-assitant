@@ -30,8 +30,16 @@ def save_reminder(title: str, due_time: str, note: str):
         }
 
 
-def list_reminders():
+def list_reminders(date_filter: str = None):
+    """
+    Returns all reminders ordered by due_time ascending.
+    If date_filter is provided (format: YYYY-MM-DD), returns only reminders
+    whose due_time starts with that date prefix.
+    """
     with SessionLocal() as session:
+        query = session.query(Reminder)
+        if date_filter:
+            query = query.filter(Reminder.due_time.like(f"{date_filter}%"))
         return [
             {
                 "id": reminder.id,
@@ -39,7 +47,7 @@ def list_reminders():
                 "due_time": reminder.due_time,
                 "note": reminder.note,
             }
-            for reminder in session.query(Reminder).order_by(Reminder.created_at.desc()).all()
+            for reminder in query.order_by(Reminder.due_time.asc()).all()
         ]
 
 

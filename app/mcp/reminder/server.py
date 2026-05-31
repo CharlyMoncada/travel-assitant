@@ -69,9 +69,10 @@ async def handle_call_tool(name: str, arguments: dict) -> list[types.TextContent
             result = {"message": "Reminder created successfully", "reminder": saved}
             
         elif name == "query_reminders":
-            reminders = db_list_reminders()
+            date_filter = arguments.get("date_filter")
+            reminders = db_list_reminders(date_filter=date_filter)
             result = {
-                "message": "List of reminders",
+                "message": f"Reminders{' for ' + date_filter if date_filter else ''}",
                 "count": len(reminders),
                 "reminders": reminders
             }

@@ -182,19 +182,43 @@ Copia tus archivos oficiales o normativos en la carpeta `rag_docs/`:
 
 ## Ejecución del Sistema
 
-El sistema opera con **tres procesos concurrentes** para asegurar el desacoplamiento físico de herramientas:
+El sistema opera con **tres procesos concurrentes** para asegurar el desacoplamiento físico de herramientas.
 
-### 1. Iniciar el Servidor MCP de Finanzas (Puerto 8002)
+### Opción A — Script unificado (recomendado)
+
+El script `start.sh` arranca los tres servicios en paralelo desde una única terminal, redirige los logs a `logs/` y los muestra en tiempo real. Presiona `Ctrl+C` para detener todos los procesos a la vez.
+
+```bash
+# Asegúrate de tener el entorno virtual activado
+source .venv/bin/activate
+
+./start.sh
+```
+
+Los logs de cada servicio se guardan en:
+- `logs/finance.log` — Servidor MCP de Finanzas
+- `logs/reminder.log` — Servidor MCP de Recordatorios
+- `logs/main.log` — Backend principal
+
+> El script activa `.venv` automáticamente si no está activo y espera 2 segundos entre el arranque de los servidores MCP y el backend principal para garantizar que los puertos estén disponibles.
+
+---
+
+### Opción B — Tres terminales independientes
+
+Si prefieres controlar cada proceso por separado, abre tres terminales con el entorno virtual activado y ejecuta cada comando en una terminal distinta:
+
+#### 1. Iniciar el Servidor MCP de Finanzas (Puerto 8002)
 ```bash
 python -m app.mcp.finance.server
 ```
 
-### 2. Iniciar el Servidor MCP de Recordatorios (Puerto 8003)
+#### 2. Iniciar el Servidor MCP de Recordatorios (Puerto 8003)
 ```bash
 python -m app.mcp.reminder.server
 ```
 
-### 3. Iniciar el Backend Principal y Dashboard (Puerto 8000)
+#### 3. Iniciar el Backend Principal y Dashboard (Puerto 8000)
 ```bash
 python -m app.main
 ```
