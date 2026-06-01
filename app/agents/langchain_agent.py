@@ -12,6 +12,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langchain_core.tools import StructuredTool
 from langchain_core.messages import HumanMessage, AIMessage, RemoveMessage
 from pydantic import BaseModel, Field, create_model
+from langsmith import traceable
+from langchain.agents import create_agent
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -343,7 +345,8 @@ class LangChainAgentRouter:
         except Exception as e:
             logger.error("Could not read or clean history for the Supervisor: %s", e, exc_info=True)
         return history
-
+    
+    @traceable(name="run_specialized_agent")
     async def _run_specialized_agent(
         self, 
         llm: ChatOpenAI, 
@@ -394,6 +397,7 @@ class LangChainAgentRouter:
 
         return agent_response, output
 
+    @traceable(name="travel_assistant_handle_message")
     async def handle_message(self, message: str, thread_id: str = "default") -> dict[str, Any]:
         """
         Asynchronously processes a user message. Connects to multiple remote MCP servers,
@@ -442,11 +446,6 @@ class LangChainAgentRouter:
             logger.info("Routing request to specialized sub-agent: '%s'", route)
             # Explicitly persist the user message in the checkpointer
             # so it figures in the history inspected by the Supervisor.
-            await temp_agent.aupdate_state(
-                config,
-                {"messages": [HumanMessage(content=message)]},
-                as_node="model"
-            )
             agent_response, output = await self._run_specialized_agent(
                 llm, route, message, config, langchain_tools, local_tools
             )

@@ -22,7 +22,6 @@ from fastapi.staticfiles import StaticFiles
 from .api.endpoints import router as api_router
 from .agents.langchain_agent import LangChainAgentRouter
 from .services.persistence.db import init_db
-from .services.rag import init_rag
 from .connectors.telegram_bot import TelegramBotService
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -37,7 +36,7 @@ async def lifespan(app: FastAPI):
     global telegram_service
     # Startup: initialize DB, RAG, and httpx.AsyncClient
     init_db()
-    init_rag()
+    # RAG se inicializa bajo demanda al llamar query_normative_documents()
     
     app.state.http_client = httpx.AsyncClient(timeout=3.0)
     

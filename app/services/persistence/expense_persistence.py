@@ -44,13 +44,14 @@ def get_expense_summary():
             "by_category": categories,
             "items": [
                 {
+                    "id": item.id,
                     "description": item.description,
                     "amount": item.amount,
                     "category": item.category,
                     "created_at": item.created_at.isoformat(),
                 }
                 for item in expenses
-            ],
+            ]
         }
 
 
