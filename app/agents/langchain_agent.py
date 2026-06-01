@@ -618,7 +618,11 @@ class LangChainAgentRouter:
             )
 
         agent_response = await specialized_agent.ainvoke(
-            {"input": message},
+            {
+                "messages": [
+                    HumanMessage(content=message)
+                ]
+            },
             config=config,
         )
 
