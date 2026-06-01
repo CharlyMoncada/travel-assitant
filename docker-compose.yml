@@ -18,6 +18,8 @@ services:
       - finance
       - reminder
     restart: unless-stopped
+    volumes:
+      - ./data/travel_assistant.db:/code/travel_assistant.db
 
   finance:
     image: travel_assistant:latest
@@ -31,6 +33,8 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
     restart: unless-stopped
+    volumes:
+      - ./data/travel_assistant.db:/code/travel_assistant.db
 
   reminder:
     image: travel_assistant:latest
@@ -44,3 +48,5 @@ services:
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
     restart: unless-stopped
+    volumes:
+      - ./data/travel_assistant.db:/code/travel_assistant.db
