@@ -1,0 +1,46 @@
+services:
+  web:
+    build: .
+    image: travel_assistant:latest
+    container_name: travel_assistant_web
+    command: python -m app.main
+    ports:
+      - 8000:8000
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      - MCP_SERVERS=http://finance:8002/sse,http://reminder:8003/sse
+      - MCP_FINANCE_SERVER_STATUS_URL=http://finance:8002/status
+      - MCP_REMINDER_SERVER_STATUS_URL=http://reminder:8003/status
+    depends_on:
+      - finance
+      - reminder
+    restart: unless-stopped
+
+  finance:
+    image: travel_assistant:latest
+    container_name: travel_assistant_finance
+    command: python -m app.mcp.finance.server
+    ports:
+      - 8002:8002
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    restart: unless-stopped
+
+  reminder:
+    image: travel_assistant:latest
+    container_name: travel_assistant_reminder
+    command: python -m app.mcp.reminder.server
+    ports:
+      - 8003:8003
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+    restart: unless-stopped

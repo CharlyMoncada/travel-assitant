@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Travel Assistant UI</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header>
+    <h1>Travel Assistant</h1>
+    <p>Minimal interface to consume the Travel Assistant API.</p>
+  </header>
+
+  <section class="panel">
+    <button id="statusButton">View status</button>
+    <button id="expensesButton">View expenses</button>
+    <button id="remindersButton">View reminders</button>
+    <button id="toolsButton">View MCP tools</button>
+  </section>
+
+  <section class="panel">
+    <label for="messageInput">Send message to `/message`</label>
+    <textarea id="messageInput" rows="3" placeholder="Type your message here..."></textarea>
+    <button id="sendMessageButton">Send message</button>
+  </section>
+
+  <section class="results">
+    <h2>Result</h2>
+    <pre id="resultOutput">Press a button to view data.</pre>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
