@@ -22,7 +22,7 @@ flowchart TB
         ENDPOINTS["app/api/endpoints.py"]
         
         subgraph Orchestration ["Capa de Agentes (app/agents/)"]
-            Router["🛠️ LangChainAgentRouter<br/>(Sesiones MCP, Poda & Memoria)"]
+            Router["🛠️ TravelAgentOrchestrator<br/>(Sesiones MCP, Poda & Memoria)"]
             
             subgraph Routing ["Enrutamiento Híbrido"]
                 Bypass{"⚡ Pre-check Determinista"}
@@ -99,7 +99,7 @@ flowchart TB
 
 #### Punto de entrada (`app/main.py`)
 - Instancia la aplicación FastAPI, monta el frontend en la ruta estática y arranca el bot de Telegram en el startup.
-- Inicializa de forma centralizada al cliente multiserver `LangChainAgentRouter` y lo inyecta en el estado de la aplicación (`app.state.message_router`).
+- Inicializa de forma centralizada al cliente multiserver `TravelAgentOrchestrator` y lo inyecta en el estado de la aplicación (`app.state.message_orchestrator`).
 
 #### API REST (`app/api/endpoints.py`)
 Expone **7 endpoints unificados** de cara a la interfaz y el dashboard del usuario:
@@ -120,8 +120,8 @@ Expone **7 endpoints unificados** de cara a la interfaz y el dashboard del usuar
 
 La arquitectura del asistente se ha modularizado y segmentado en múltiples archivos físicos dentro de `app/agents/` bajo un patrón **Multi-Agente con Supervisor Enrutador Cognitivo Unificado**:
 
-#### A. Router y Cliente Multiserver (`app/agents/langchain_agent.py`)
-- **`LangChainAgentRouter`**: Actúa como el punto de contacto unificado del backend con la infraestructura de agentes y servidores de herramientas.
+#### A. Orquestador y Cliente Multiserver (`app/agents/orchestrator.py`)
+- **`TravelAgentOrchestrator`**: Actúa como el punto de contacto unificado del backend con la infraestructura de agentes y servidores de herramientas.
 - **Cliente Multiserver MCP**: Usa `AsyncExitStack` para abrir dinámicamente conexiones de stream de eventos de servidor (SSE) con múltiples microservicios concurrentes (`finance_server` y `reminder_server`).
 - **Traductor Pydantic Dinámico**: Convierte las definiciones en formato JSON `inputSchema` provenientes de los servidores MCP en clases **Pydantic V2** tipadas en tiempo de ejecución. Esto garantiza function calling de altísima precisión.
 - **Filtrado Selectivo del Historial (`_get_clean_history`)**: Antes de consultar al Supervisor LLM, extrae un historial limpio omitiendo las etiquetas de enrutamiento interno (`[ROUTE: ...]`) y los mensajes de bajo nivel (`ToolMessage` y `AIMessage` con llamadas a funciones). Esto le presenta al Supervisor una línea de tiempo conversacional nítida (solo `HumanMessage` y `AIMessage` puros de interacción directa) ideal para tomar decisiones de *Sticky Routing*.
@@ -192,7 +192,7 @@ Además, el agente expone herramientas locales no MCP: `rules` y `logistics`.
 El procesamiento de cualquier solicitud en el sistema sigue una secuencia estructurada de enrutamiento cognitivo unificado y ejecución aislada:
 
 1. **Recepción del Mensaje**: El usuario interactúa mediante Telegram o la consola web frontend (`POST /message`).
-2. **Establecimiento de Conexiones MCP**: `LangChainAgentRouter` establece streams SSE simultáneos con los microservicios disponibles. Descubre dinámicamente las herramientas e instrumenta la traducción a clases tipadas **Pydantic V2**.
+2. **Establecimiento de Conexiones MCP**: `TravelAgentOrchestrator` establece streams SSE simultáneos con los microservicios disponibles. Descubre dinámicamente las herramientas e instrumenta la traducción a clases tipadas **Pydantic V2**.
 3. **Poda Conversacional**: Antes de evaluar, se recupera el estado del checkpointer y se realiza una poda de turnos conversacionales completos si se excede el límite preestablecido para evitar el desborde del contexto.
 4. **Filtrado Selectivo del Historial**: El Router compila un historial limpio (`_get_clean_history`) excluyendo etiquetas y ToolMessages de bajo nivel para presentárselo en un formato nítido al Supervisor.
 5. **Orquestación y Enrutamiento Cognitivo**: El Supervisor LLM recibe el historial limpio y el mensaje entrante. Aplicando sus habilidades semánticas internas definidas en su Prompt del Sistema (Bilingual Keywords & Sticky Routing):

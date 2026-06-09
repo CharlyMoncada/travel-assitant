@@ -21,8 +21,8 @@ Asistente inteligente de viaje basado en IA Generativa que integra una arquitect
   - **Finance MCP Server** (Puerto `8002`): Servidor independiente sobre SSE exclusivo para transacciones financieras CRUD de gastos.
   - **Reminder MCP Server** (Puerto `8003`): Servidor independiente sobre SSE exclusivo para la administración de recordatorios de viaje.
 - **⚙️ Validación Pydantic Dinámica**: Conversión automática al vuelo de los esquemas de parámetros JSON (`inputSchema`) de múltiples servidores MCP remotos en modelos tipados **Pydantic V2** (`create_model`), permitiendo que el LLM realice function calling robusto y seguro.
-- **💾 Persistencia e Integridad conversacional**: Uso de LangGraph con `MemorySaver` resolviendo la ambigüedad en flujos complejos especificando de manera consistente la actualización de hilos mediante `as_node="model"`.
-- **✂️ Poda dinámica del historial**: Limitación controlada a un máximo de 8 mensajes para mantener la ventana de contexto limpia de ruido y evitar alucinaciones.
+- **💾 Persistencia e Integridad conversacional**: Persistencia estructurada de mensajes en una base de datos relacional SQLite que garantiza la integridad y alineación de turnos (User-Assistant Symmetry) en el historial de forma tolerante a fallos.
+- **⚡ Sub-Agentes sin Estado (Stateless)**: Ejecución aislada y sin estado de sub-agentes (sin checkpointer interno), evitando contaminación de estado cruzado (cross-contamination) entre agentes y reduciendo drásticamente el consumo de tokens.
 - **🔍 Sistema RAG avanzado**: Búsqueda semántica en documentos normativos (.txt y .pdf) usando ChromaDB y embeddings locales (`all-MiniLM-L6-v2`) con inicialización lazy para optimizar el startup del servidor principal.
 - **💬 Interfaces múltiples**: Punto de acceso único para frontend web y Bot de Telegram (opcional).
 
@@ -41,7 +41,7 @@ flowchart TB
 
     subgraph Backend ["Capa de Presentación y Orquestación (Port 8000)"]
         API[" FastAPI (POST /message)"]
-        Router["🛠️ LangChainAgentRouter<br/>(Memoria, Conexión MCP & Filtro Historial)"]
+        Router["🛠️ TravelAgentOrchestrator<br/>(Memoria, Conexión MCP & Filtro Historial)"]
         
         subgraph Routing ["Orquestación Cognitiva"]
             Supervisor["🧠 Supervisor LLM<br/>(Bilingual Keywords & Sticky Routing)"]
@@ -92,7 +92,7 @@ flowchart TB
    - `app/main.py`: Punto de entrada del backend y bot de Telegram.
    - `app/api/endpoints.py`: Expone los 7 endpoints REST unificados y el panel de control agregando el catálogo y estado de salud de todos los servidores MCP externos.
 2. **Capa de Agentes y Orquestación** (`app/agents/`):
-   - `app/agents/langchain_agent.py`: Orquestador y Router principal. Administra la conexión asíncrona a múltiples endpoints SSE mediante `AsyncExitStack`, realiza el filtrado selectivo del historial conversacional (`_get_clean_history`), maneja la traducción de esquemas MCP a Pydantic V2, realiza la poda periódica de mensajes, y persiste de forma explícita el mensaje del usuario antes de derivar al especialista.
+    - `app/agents/orchestrator.py`: Orquestador y Router principal. Administra la conexión asíncrona a múltiples endpoints SSE mediante `AsyncExitStack`, distribuye de manera específica las herramientas descubiertas a cada sub-agente, maneja la traducción de esquemas MCP a Pydantic V2, implementa manejo robusto de excepciones de herramientas MCP (`ToolException`), y gestiona el flujo de persistencia conversacional e inyección de contexto.
    - `app/agents/supervisor/`: Contiene al Agente Supervisor y su lógica de enrutamiento cognitivo:
      - `app/agents/supervisor/agent.py`: Lógica del código de enrutamiento del Supervisor LLM.
      - `app/agents/supervisor/prompts.py`: Define el prompt cognitivo (`SUPERVISOR_SYSTEM_PROMPT`).
@@ -132,7 +132,7 @@ Crea un archivo `.env` en la raíz del proyecto con la configuración de las API
 ```bash
 # OpenAI (Requerido para inferencia avanzada y function calling)
 OPENAI_API_KEY=sk-your-openai-api-key-here
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5-nano
 
 # Embeddings RAG
 EMBEDDING_MODEL=all-MiniLM-L6-v2
@@ -144,9 +144,15 @@ MCP_REMINDER_SERVER_STATUS_URL=http://localhost:8003/status
 
 # Telegram Bot (Opcional, registrar con BotFather)
 TELEGRAM_TOKEN=your-telegram-bot-token-here
+
+# Monitoreo y Observabilidad (LangSmith - Opcional)
+LANGSMITH_TRACING=true
+LANGSMITH_ENDPOINT=https://api.smith.langchain.com
+LANGSMITH_API_KEY=your-langsmith-api-key-here
+LANGSMITH_PROJECT=travel-assistant
 ```
 
-> Nota: Si no se define `MCP_SERVERS`, el cliente multiserver usará por defecto `http://localhost:8002/sse` y `http://localhost:8003/sse`.
+> Nota: Si no se define `MCP_SERVERS`, el cliente multiserver usará por defecto `http://localhost:8002/sse` y `http://localhost:8003/sse`. Si no se configuran las variables de LangSmith, el sistema funcionará normalmente en modo pasivo sin enviar trazas.
 
 ## 4. Docker y arranque conjunto
 Se incluye `Dockerfile` y `docker-compose.yml` para lanzar los tres servicios en paralelo:
@@ -177,6 +183,13 @@ Copia tus archivos oficiales o normativos en la carpeta `rag_docs/`:
 - `visa.txt`: Políticas de visa y pasaportes.
 - `seguridad.txt`: Normas y advertencias.
 - `Documento_Viaje_UE.pdf`: Documentación oficial en PDF.
+
+### 6. Monitoreo y Observabilidad (LangSmith)
+El asistente cuenta con una integración para el rastreo visual del comportamiento agéntico. Si has configurado las variables de LangSmith en tu `.env`, puedes verificar la conexión ejecutando:
+```bash
+python -c "from langsmith import Client; client = Client(); print('Conectado. Proyectos activos:', [p.name for p in client.list_projects()])"
+```
+Una vez levantado el servidor principal, cualquier mensaje enviado al bot o a la API generará trazas detalladas en tiempo real de la ejecución agéntica, latencia y uso de tokens en [smith.langchain.com](https://smith.langchain.com/).
 
 ---
 

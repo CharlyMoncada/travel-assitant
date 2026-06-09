@@ -23,8 +23,8 @@ async def run_scenario_step(router, message: str, thread_id: str):
                 logger.info(f"-> Tool Calls realizadas: {msg.tool_calls}")
 
 async def main():
-    from app.agents.langchain_agent import LangChainAgentRouter
-    router = LangChainAgentRouter()
+    from app.agents.orchestrator import TravelAgentOrchestrator
+    router = TravelAgentOrchestrator()
     
     # ----------------------------------------------------
     # ESCENARIO A: FLUJO DE FINANZAS CON STICKY ROUTING

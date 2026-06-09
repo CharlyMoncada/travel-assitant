@@ -43,7 +43,7 @@ def make_logistics_coroutine():
     return call_logistics
 
 
-def get_agent_tools() -> list:
+def get_general_tools() -> list:
     return [
         StructuredTool(
             name="rules",

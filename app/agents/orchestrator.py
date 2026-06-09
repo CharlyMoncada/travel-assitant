@@ -4,11 +4,9 @@ import os
 from contextlib import AsyncExitStack
 from typing import Any, Optional
 
-from langchain.agents import create_agent
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
-from langchain_core.tools import StructuredTool
+from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.tools import StructuredTool, ToolException
 from langchain_openai import ChatOpenAI
-from langgraph.checkpoint.memory import MemorySaver
 from langsmith import traceable
 from mcp import ClientSession
 from mcp.client.sse import sse_client
@@ -25,23 +23,20 @@ from ..services.persistence.memory_persistence import (
 )
 from .finance import create_finance_agent
 from .general import create_general_agent
-from .prompts import AGENT_SYSTEM_PROMPT
 from .reminder import create_reminder_agent
 from .supervisor import run_supervisor
 
 logger = logging.getLogger(__name__)
 
 
-class LangChainAgentRouter:
+class TravelAgentOrchestrator:
     """
-    Router based on LangChain acting as a multiserver client for the Model Context Protocol (MCP).
+    Orchestrator based on LangChain acting as a multiserver client for the Model Context Protocol (MCP).
     Connects to multiple independent tool servers simultaneously,
     discovers their capabilities dynamically, and exposes the tools to LangChain as StructuredTools.
     """
 
     def __init__(self):
-        self.memory = MemorySaver()
-
         mcp_servers_env = os.getenv(
             "MCP_SERVERS",
             "http://localhost:8002/sse/,http://localhost:8003/sse/",
@@ -56,14 +51,8 @@ class LangChainAgentRouter:
                 url = url + "/"
             self.mcp_servers.append(url)
 
-        self.mcp_server_url = (
-            self.mcp_servers[0]
-            if self.mcp_servers
-            else "http://localhost:8002/sse/"
-        )
-
         logger.info(
-            "LangChainAgentRouter initialized with MCP servers: %s",
+            "TravelAgentOrchestrator initialized with MCP servers: %s",
             self.mcp_servers,
         )
 
@@ -104,7 +93,7 @@ class LangChainAgentRouter:
 
     async def stop(self):
         if self.stack:
-            logger.info("Stopping persistent connections for LangChainAgentRouter...")
+            logger.info("Stopping persistent connections for TravelAgentOrchestrator...")
 
             try:
                 await self.stack.aclose()
@@ -115,7 +104,7 @@ class LangChainAgentRouter:
             self.sessions = []
             self._cached_tools = {}
 
-            logger.info("Persistent connections for LangChainAgentRouter closed.")
+            logger.info("Persistent connections for TravelAgentOrchestrator closed.")
 
     def _extract_message(self, output: Any) -> str:
         if isinstance(output, str):
@@ -140,24 +129,19 @@ class LangChainAgentRouter:
         required = schema.get("required", [])
         fields = {}
 
+        type_mapping = {
+            "string": str,
+            "number": float,
+            "integer": int,
+            "boolean": bool,
+            "array": list,
+            "object": dict
+        }
+
         for name, prop in properties.items():
             type_str = prop.get("type", "string")
             description = prop.get("description", "")
-
-            if type_str == "string":
-                py_type = str
-            elif type_str == "number":
-                py_type = float
-            elif type_str == "integer":
-                py_type = int
-            elif type_str == "boolean":
-                py_type = bool
-            elif type_str == "array":
-                py_type = list
-            elif type_str == "object":
-                py_type = dict
-            else:
-                py_type = Any
+            py_type = type_mapping.get(type_str, Any)
 
             if name in required:
                 fields[name] = (py_type, Field(description=description))
@@ -169,31 +153,98 @@ class LangChainAgentRouter:
 
         return fields
 
-    def _get_local_tools(self) -> list[StructuredTool]:
-        try:
-            from .tools import get_agent_tools
+    def _make_mcp_tool_coroutine(self, tool_name: str, server_url: str):
+        async def make_tool_call(**kwargs) -> str:
+            clean_kwargs = {k: v for k, v in kwargs.items() if v is not None}
 
-            local_tools = get_agent_tools()
-            logger.info("Adding agent local tools: %s", [t.name for t in local_tools])
-            return local_tools
+            logger.info(
+                "Remote invocation of MCP tool '%s' with arguments: %s",
+                tool_name,
+                clean_kwargs,
+            )
 
-        except Exception as e:
-            logger.debug("Failed to load agent local tools: %s", e)
-            return []
+            active_session = None
+
+            for u, s in self.sessions:
+                if u == server_url:
+                    active_session = s
+                    break
+
+            if not active_session:
+                logger.info(
+                    "Session for %s not found. Reconnecting...",
+                    server_url,
+                )
+
+                await self.get_sessions()
+
+                for u, s in self.sessions:
+                    if u == server_url:
+                        active_session = s
+                        break
+
+            if not active_session:
+                raise ToolException(
+                    f"Error: The MCP server at {server_url} is currently offline and unavailable."
+                )
+
+            try:
+                resp = await active_session.call_tool(
+                    tool_name,
+                    clean_kwargs,
+                )
+
+            except Exception as e:
+                logger.error(
+                    "Error invoking remote tool '%s' on %s: %s",
+                    tool_name,
+                    server_url,
+                    e,
+                )
+
+                self.sessions = [
+                    (u, s)
+                    for u, s in self.sessions
+                    if u != server_url
+                ]
+
+                if server_url in self._cached_tools:
+                    del self._cached_tools[server_url]
+
+                raise ToolException(
+                    f"Error executing tool '{tool_name}' (lost connection with MCP server at {server_url})."
+                )
+
+            if getattr(resp, "isError", False) or getattr(resp, "is_error", False):
+                error_msg = resp.content[0].text if resp.content else "Unknown error occurred on MCP server."
+                raise ToolException(
+                    f"Tool execution failed on MCP server: {error_msg}"
+                )
+
+            if resp.content and len(resp.content) > 0:
+                logger.debug(
+                    "Tool '%s' responded with: %s",
+                    tool_name,
+                    resp.content[0].text,
+                )
+                return resp.content[0].text
+
+            raise ToolException(
+                f"Error: Did not receive response content for '{tool_name}'."
+            )
+
+        return make_tool_call
 
     async def _discover_mcp_tools(
         self,
         sessions: list[tuple[str, ClientSession]],
-    ) -> list[StructuredTool]:
-        if not hasattr(self, "_cached_tools"):
-            self._cached_tools = {}
-
-        langchain_tools = []
+    ) -> dict[str, list[StructuredTool]]:
+        langchain_tools_by_server = {}
 
         for url, session in sessions:
             if url in self._cached_tools:
                 logger.debug("Using cached tools for MCP server %s", url)
-                langchain_tools.extend(self._cached_tools[url])
+                langchain_tools_by_server[url] = self._cached_tools[url]
                 continue
 
             try:
@@ -224,99 +275,19 @@ class LangChainAgentRouter:
 
                         PydanticModelClass = EmptySchema
 
-                    def make_call_closure(tool_name=mcp_tool.name, server_url=url):
-                        async def make_tool_call(**kwargs) -> str:
-                            clean_kwargs = {
-                                k: v for k, v in kwargs.items() if v is not None
-                            }
-
-                            logger.info(
-                                "Remote invocation of MCP tool '%s' with arguments: %s",
-                                tool_name,
-                                clean_kwargs,
-                            )
-
-                            active_session = None
-
-                            for u, s in self.sessions:
-                                if u == server_url:
-                                    active_session = s
-                                    break
-
-                            if not active_session:
-                                logger.info(
-                                    "Session for %s not found. Reconnecting...",
-                                    server_url,
-                                )
-
-                                await self.get_sessions()
-
-                                for u, s in self.sessions:
-                                    if u == server_url:
-                                        active_session = s
-                                        break
-
-                            if not active_session:
-                                return (
-                                    f"Error: The MCP server at {server_url} "
-                                    f"is currently unavailable."
-                                )
-
-                            try:
-                                resp = await active_session.call_tool(
-                                    tool_name,
-                                    clean_kwargs,
-                                )
-
-                            except Exception as e:
-                                logger.error(
-                                    "Error invoking remote tool '%s' on %s: %s",
-                                    tool_name,
-                                    server_url,
-                                    e,
-                                )
-
-                                self.sessions = [
-                                    (u, s)
-                                    for u, s in self.sessions
-                                    if u != server_url
-                                ]
-
-                                if server_url in self._cached_tools:
-                                    del self._cached_tools[server_url]
-
-                                return (
-                                    f"Error executing tool '{tool_name}' "
-                                    f"(lost connection with {server_url})."
-                                )
-
-                            if resp.content and len(resp.content) > 0:
-                                logger.debug(
-                                    "Tool '%s' responded with: %s",
-                                    tool_name,
-                                    resp.content[0].text,
-                                )
-                                return resp.content[0].text
-
-                            return (
-                                f"Error: Did not receive response content "
-                                f"for '{tool_name}'"
-                            )
-
-                        return make_tool_call
-
                     server_tools.append(
                         StructuredTool(
                             name=mcp_tool.name,
                             description=mcp_tool.description,
-                            coroutine=make_call_closure(),
+                            coroutine=self._make_mcp_tool_coroutine(mcp_tool.name, url),
                             func=lambda **kwargs: "",
                             args_schema=PydanticModelClass,
+                            handle_tool_error=True,
                         )
                     )
 
                 self._cached_tools[url] = server_tools
-                langchain_tools.extend(server_tools)
+                langchain_tools_by_server[url] = server_tools
 
             except Exception as e:
                 logger.warning(
@@ -330,110 +301,8 @@ class LangChainAgentRouter:
                 if url in self._cached_tools:
                     del self._cached_tools[url]
 
-        return langchain_tools
+        return langchain_tools_by_server
 
-    async def _prune_history_if_needed(
-        self,
-        temp_agent,
-        config: dict,
-        thread_id: str,
-    ) -> None:
-        try:
-            state = await temp_agent.aget_state(config)
-
-            if state and "messages" in state.values:
-                current_messages = state.values["messages"]
-
-                human_indices = [
-                    i
-                    for i, msg in enumerate(current_messages)
-                    if isinstance(msg, HumanMessage)
-                    or getattr(msg, "type", None) == "human"
-                ]
-
-                max_turns = 3
-
-                if len(human_indices) > max_turns:
-                    keep_from_idx = human_indices[-max_turns]
-                    messages_to_remove = current_messages[:keep_from_idx]
-
-                    removals = [
-                        RemoveMessage(id=msg.id)
-                        for msg in messages_to_remove
-                        if getattr(msg, "id", None)
-                    ]
-
-                    if removals:
-                        logger.info(
-                            "Pruning complete turns: removing %d old messages "
-                            "in thread '%s'",
-                            len(removals),
-                            thread_id,
-                        )
-
-                        await temp_agent.aupdate_state(
-                            config,
-                            {"messages": removals},
-                            as_node="model",
-                        )
-
-        except Exception as e:
-            logger.warning(
-                "Could not perform turn pruning in thread '%s': %s",
-                thread_id,
-                e,
-                exc_info=True,
-            )
-
-    async def _get_clean_history(self, temp_agent, config: dict) -> list:
-        history = []
-
-        try:
-            state = await temp_agent.aget_state(config)
-
-            if state and "messages" in state.values:
-                raw_messages = state.values["messages"]
-
-                logger.info(
-                    "Filtering history for Supervisor. Total raw messages: %d",
-                    len(raw_messages),
-                )
-
-                for msg in raw_messages:
-                    msg_type = getattr(msg, "type", None)
-
-                    if msg_type in ["human", "ai"]:
-                        has_tool_calls = (
-                            (hasattr(msg, "tool_calls") and msg.tool_calls)
-                            or (
-                                hasattr(msg, "additional_kwargs")
-                                and "tool_calls" in msg.additional_kwargs
-                            )
-                        )
-
-                        if has_tool_calls:
-                            continue
-
-                        content_str = str(getattr(msg, "content", ""))
-
-                        if "[ROUTE:" in content_str:
-                            continue
-
-                        history.append(msg)
-
-            logger.info(
-                "Clean history for Supervisor compiled. Final messages: %d",
-                len(history),
-            )
-
-        except Exception as e:
-            logger.error(
-                "Could not read or clean history for Supervisor: %s",
-                e,
-                exc_info=True,
-            )
-
-        return history
 
     def _get_persistent_history(self, thread_id: str, limit: int = 20) -> list:
         persistent_messages = []
@@ -472,20 +341,11 @@ class LangChainAgentRouter:
     def _format_persistent_memory(self, thread_id: str, limit: int = 20) -> str:
         try:
             rows = get_recent_messages(thread_id, limit=limit)
-
-            if not rows:
-                return ""
-
-            lines = []
-
-            for row in rows:
-                role = row.get("role")
-                content = row.get("content")
-
-                if content:
-                    lines.append(f"{role}: {content}")
-
-            return "\n".join(lines)
+            return "\n".join(
+                f"{row['role']}: {row['content']}"
+                for row in rows
+                if row.get("content")
+            )
 
         except Exception as e:
             logger.warning(
@@ -582,39 +442,38 @@ class LangChainAgentRouter:
         route: str,
         message: str,
         config: dict,
-        langchain_tools: list,
-        local_tools: list,
+        langchain_tools_by_server: dict[str, list],
     ) -> tuple[Any, str]:
         if route == "finance":
+            finance_tools = []
+            for url, tools in langchain_tools_by_server.items():
+                if "8002" in url or "finance" in url:
+                    finance_tools.extend(tools)
             specialized_agent = create_finance_agent(
                 llm,
-                langchain_tools,
-                self.memory,
+                finance_tools,
             )
 
         elif route == "reminder":
+            reminder_tools = []
+            for url, tools in langchain_tools_by_server.items():
+                if "8003" in url or "reminder" in url:
+                    reminder_tools.extend(tools)
             specialized_agent = create_reminder_agent(
                 llm,
-                langchain_tools,
-                self.memory,
+                reminder_tools,
             )
 
         elif route == "general":
             specialized_agent = create_general_agent(
                 llm,
-                local_tools,
-                self.memory,
             )
 
         else:
-            logger.warning("Unknown route '%s', using fallback agent", route)
+            logger.warning("Unknown route '%s', falling back to 'general' agent", route)
 
-            specialized_agent = create_agent(
+            specialized_agent = create_general_agent(
                 llm,
-                langchain_tools + local_tools,
-                system_prompt=AGENT_SYSTEM_PROMPT,
-                checkpointer=self.memory,
-                debug=False,
             )
 
         agent_response = await specialized_agent.ainvoke(
@@ -659,10 +518,20 @@ class LangChainAgentRouter:
         )
 
         try:
+            save_message(thread_id, "user", message)
+            self._save_long_term_memory_if_needed(thread_id, message)
+        except Exception as e:
+            logger.warning(
+                "Could not persist user message or memory at startup for thread '%s': %s",
+                thread_id,
+                e,
+                exc_info=True,
+            )
+
+        try:
             sessions = await self.get_sessions()
 
-            langchain_tools = await self._discover_mcp_tools(sessions)
-            local_tools = self._get_local_tools()
+            langchain_tools_by_server = await self._discover_mcp_tools(sessions)
 
             llm = ChatOpenAI(
                 model_name=get_openai_model(),
@@ -671,24 +540,10 @@ class LangChainAgentRouter:
 
             config = {"configurable": {"thread_id": thread_id}}
 
-            temp_agent = create_agent(
-                llm,
-                [],
-                system_prompt="",
-                checkpointer=self.memory,
-            )
-
-            await self._prune_history_if_needed(temp_agent, config, thread_id)
-
-            history = await self._get_clean_history(temp_agent, config)
-
-            persistent_history = self._get_persistent_history(
+            history = self._get_persistent_history(
                 thread_id,
                 limit=20,
             )
-
-            if persistent_history:
-                history = persistent_history
 
             long_term_memory_text = format_user_memories(thread_id)
 
@@ -711,7 +566,6 @@ class LangChainAgentRouter:
                 final_message = self._extract_message(supervisor_text)
 
                 try:
-                    save_message(thread_id, "user", message)
                     save_message(thread_id, "assistant", final_message)
                 except Exception as e:
                     logger.warning(
@@ -719,8 +573,6 @@ class LangChainAgentRouter:
                         e,
                         exc_info=True,
                     )
-
-                self._save_long_term_memory_if_needed(thread_id, message)
 
                 return {
                     "llm_used": True,
@@ -744,29 +596,19 @@ class LangChainAgentRouter:
                 message=message,
             )
 
-            try:
-                save_message(thread_id, "user", message)
-            except Exception as e:
-                logger.warning(
-                    "Could not persist user message: %s",
-                    e,
-                    exc_info=True,
-                )
 
-            self._save_long_term_memory_if_needed(thread_id, message)
 
             agent_response, output = await self._run_specialized_agent(
                 llm,
                 route,
                 message_for_agent,
                 config,
-                langchain_tools,
-                local_tools,
+                langchain_tools_by_server
             )
 
         except Exception as exc:
             logger.exception(
-                "Exception during LangChainAgentRouter execution: %s",
+                "Exception during TravelAgentOrchestrator execution: %s",
                 exc,
             )
 

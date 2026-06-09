@@ -17,11 +17,11 @@ sys.path.append(os.getcwd())
 
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from langchain_openai import ChatOpenAI
-from app.agents.langchain_agent import LangChainAgentRouter
+from app.agents.orchestrator import TravelAgentOrchestrator
 from app.services.llm import get_openai_model
 
 async def test():
-    router = LangChainAgentRouter()
+    router = TravelAgentOrchestrator()
     llm = ChatOpenAI(model_name=get_openai_model(), temperature=0.0)
     config = {"configurable": {"thread_id": "test_thread_bug"}}
     
@@ -67,9 +67,9 @@ async def test():
         logger.info(f"  [{idx}] type: {m.type}, id: {m.id}, class: {m.__class__.__name__}")
         
     # 4. Obtener historial limpio para el supervisor
-    logger.info("Obteniendo historial limpio para el supervisor...")
-    history = await router._get_clean_history(temp_agent, config)
-    logger.info(f"Historial limpio (Total: {len(history)}):")
+    logger.info("Obteniendo historial para el supervisor...")
+    history = router._get_persistent_history("test_thread_bug")
+    logger.info(f"Historial (Total: {len(history)}):")
     for idx, m in enumerate(history):
         logger.info(f"  [{idx}] type: {m.type}, id: {m.id}, class: {m.__class__.__name__}, content: '{m.content[:30]}'")
         

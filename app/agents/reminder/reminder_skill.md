@@ -10,7 +10,7 @@ The Reminder Agent is a specialist sub-agent instantiated exclusively when the S
 
 ```mermaid
 graph TD
-    A[Supervisor Routes<br/>ROUTE: reminder] --> B[LangChainAgentRouter<br/>1. Inject HumanMessage & Create Specialist]
+    A[Supervisor Routes<br/>ROUTE: reminder] --> B[TravelAgentOrchestrator<br/>1. Inject HumanMessage & Create Specialist]
     B --> C[Reminder Agent LLM<br/>2. Reminder Skill System Prompt]
 
     subgraph Cognitive ["Behavioral Layers"]
@@ -171,7 +171,7 @@ The Reminder MCP Server (`app/mcp/reminder/server.py`) runs as an independent pr
 ```mermaid
 sequenceDiagram
     participant RA as Reminder Agent LLM
-    participant Router as LangChainAgentRouter
+    participant Router as TravelAgentOrchestrator
     participant MCP as Reminder MCP Server (8003)
     participant DB as SQLite Database
 
@@ -205,7 +205,7 @@ Reminder data is stored in **SQLite** (`travel_assistant.db`) via the domain per
 
 ## 7. Persistent State & Checkpointer Integration
 
-The Reminder Agent participates in the shared `MemorySaver` checkpointer pipeline managed by `LangChainAgentRouter`:
+The Reminder Agent participates in the shared `MemorySaver` checkpointer pipeline managed by `TravelAgentOrchestrator`:
 
 1.  **HumanMessage Injection**: Before the Reminder Agent is invoked, the Router explicitly writes the current `HumanMessage` to the LangGraph checkpointer via `aupdate_state(as_node="model")`. This ensures the specialist's timeline is correctly anchored and that future Sticky Routing inspections by the Supervisor can identify `reminder` as the last active domain.
 2.  **Sub-Agent Isolation**: The Reminder Agent runs on its own compiled LangGraph instance. It reads the shared thread state but writes its responses under the same `thread_id`, maintaining a consistent and collision-free conversational timeline.

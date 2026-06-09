@@ -29,8 +29,8 @@ async def run_scenario(router, message: str, thread_id: str):
         raise e
 
 async def main():
-    from app.agents.langchain_agent import LangChainAgentRouter
-    router = LangChainAgentRouter()
+    from app.agents.orchestrator import TravelAgentOrchestrator
+    router = TravelAgentOrchestrator()
     
     thread_id = "stress_integration_test_thread"
     

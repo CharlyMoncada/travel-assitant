@@ -1,40 +1,33 @@
-from typing import Optional
 import logging
+from typing import Optional
+from pydantic import BaseModel, Field
 
 from langchain_core.messages import SystemMessage, HumanMessage
 
-from .prompts import SUPERVISOR_SYSTEM_PROMPT
+from .prompts import SUPERVISOR_SYSTEM_PROMPT, MEMORY_RULE
 
 logger = logging.getLogger(__name__)
 
 
+class RoutingDecision(BaseModel):
+    route: Optional[str] = Field(
+        None,
+        description="The target sub-agent route: 'finance', 'reminder', 'general', or null for direct response/interaction."
+    )
+    response: Optional[str] = Field(
+        None,
+        description="The direct text response to the user for smalltalk, clarifications, greetings, or out-of-scope rejections. Leave empty if routing."
+    )
+
+
 async def run_supervisor(llm, history: list, message: str) -> tuple[Optional[str], str]:
     """
-    Invokes the Supervisor LLM with the routing skill to determine routing or direct conversation.
+    Invokes the Supervisor LLM with structured outputs to determine routing or direct conversation.
     Returns a tuple (route, response_text).
     """
 
-    memory_rule = """
-IMPORTANT MEMORY RULE:
-If the user asks about something they previously told you, their preferences,
-saved context, memory, or personal travel preferences, answer directly using
-the conversation history.
-
-Do not route to any specialized agent if the answer is already present in history.
-
-Examples:
-- "What is my favorite airport?"
-- "What did I tell you before?"
-- "Do you remember my travel preference?"
-- "Cuál es mi aeropuerto favorito?"
-- "Cual es mi aeropuerto favorito para viajar?"
-
-If the answer is present in the conversation history, respond directly.
-Do not output [ROUTE: general], [ROUTE: finance] or [ROUTE: reminder].
-"""
-
     supervisor_messages = [
-        SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT + "\n\n" + memory_rule)
+        SystemMessage(content=SUPERVISOR_SYSTEM_PROMPT + "\n\n" + MEMORY_RULE)
     ] + history + [HumanMessage(content=message)]
 
     logger.info("==================================================")
@@ -54,28 +47,35 @@ Do not output [ROUTE: general], [ROUTE: finance] or [ROUTE: reminder].
         )
 
     logger.info("==================================================")
-    logger.info("Invoking the Supervisor LLM to classify/respond to the request")
+    logger.info("Invoking the Supervisor LLM with Structured Output (RoutingDecision)")
 
-    supervisor_response = await llm.ainvoke(supervisor_messages)
-    supervisor_text = supervisor_response.content.strip()
-
-    logger.info("Supervisor LLM responds: '%s'", supervisor_text)
+    try:
+        structured_llm = llm.with_structured_output(RoutingDecision)
+        supervisor_response = await structured_llm.ainvoke(supervisor_messages)
+    except Exception as e:
+        logger.error("Error invoking Supervisor with structured outputs: %s", e, exc_info=True)
+        # Safe fallback: treat as empty routing decision to default to supervisor chat or general
+        supervisor_response = RoutingDecision(route=None, response="Error interno de clasificación.")
 
     route = None
+    supervisor_text = ""
 
-    if "[ROUTE:" in supervisor_text:
-        try:
-            route_part = supervisor_text.split("[ROUTE:")[1].split("]")[0]
-            route = route_part.strip().lower()
+    if supervisor_response:
+        route = supervisor_response.route
+        supervisor_text = supervisor_response.response or ""
 
-            if route in ["rules", "logistics"]:
-                logger.info(
-                    "Mapping detected alias '%s' by the LLM to the official 'general' route",
-                    route,
-                )
-                route = "general"
+        if isinstance(route, str):
+            route = route.lower().strip()
+            if route in ["", "none", "null"]:
+                route = None
 
-        except Exception as e:
-            logger.warning("Could not parse route from supervisor response: %s", e)
+        if route and route in ["rules", "logistics"]:
+            logger.info(
+                "Mapping detected alias '%s' by the LLM to the official 'general' route",
+                route,
+            )
+            route = "general"
+
+    logger.info("Supervisor LLM responds - Route: '%s' | Response: '%s'", route, supervisor_text)
 
     return route, supervisor_text

@@ -1,4 +1,4 @@
-GENERAL_AGENT_SYSTEM_PROMPT = (
+SYSTEM_PROMPT = (
     "You are the General Travel Regulations Agent.\n"
     "For visas, passports, entry requirements, documentation, vaccines, COVID rules, "
     "health requirements or safety advice, you MUST call the `rules` tool.\n\n"
