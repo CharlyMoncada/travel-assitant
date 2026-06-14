@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import os
 import re
 from pathlib import Path
 from threading import Lock
@@ -16,13 +17,16 @@ PERSIST_DIR = Path(__file__).resolve().parent.parent / "chromadb_store"
 COLLECTION_NAME = "travel_rules"
 RAG_DOCS_DIR = Path(__file__).resolve().parent.parent.parent / "rag_docs"
 
-# Valores fijos en código, sin .env
-EMBEDDING_MODEL = "paraphrase-multilingual-MiniLM-L12-v2"
-CHUNK_SIZE = 900
-CHUNK_OVERLAP = 150
+# Configuración RAG parametrizable por entorno
+EMBEDDING_MODEL = os.getenv(
+    "EMBEDDING_MODEL",
+    "paraphrase-multilingual-MiniLM-L12-v2"
+)
+CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "900"))
+CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "150"))
 UPSERT_BATCH_SIZE = 100
-QUERY_CANDIDATES = 15
-MAX_DISTANCE = 0.50
+QUERY_CANDIDATES = int(os.getenv("RAG_QUERY_CANDIDATES", "15"))
+MAX_DISTANCE = float(os.getenv("RAG_MAX_DISTANCE", "0.50"))
 
 PDF_NOISE_PATTERNS = [
     r"\b\d{1,2}/\d{1,2}/\d{2,4},\s+\d{1,2}:\d{2}\s*(?:AM|PM)\b",

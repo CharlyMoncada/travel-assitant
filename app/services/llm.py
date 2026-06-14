@@ -15,7 +15,7 @@ def get_openai_api_key() -> Optional[str]:
 
 
 def get_openai_model() -> str:
-    return os.getenv("OPENAI_MODEL", "gpt-4.1-nano")
+    return os.getenv("OPENAI_MODEL", "gpt-5-nano")
 
 
 def is_available() -> bool:

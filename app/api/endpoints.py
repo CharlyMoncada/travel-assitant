@@ -102,7 +102,7 @@ async def receive_message(request: Request, payload: MessagePayload):
     text = payload.text.strip()
     thread_id = payload.thread_id or payload.session_id or "default"
     # We use await because handle_message is now an asynchronous function (MCP Client)
-    return await request.app.state.message_router.handle_message(text, thread_id=thread_id)
+    return await request.app.state.message_orchestrator.handle_message(text, thread_id=thread_id)
 
 
 @router.get("/expenses")

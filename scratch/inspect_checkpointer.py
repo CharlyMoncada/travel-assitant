@@ -7,8 +7,8 @@ dotenv_path = Path("/Users/carlosmoncada/Documents/code/master/tfm/travel-assita
 load_dotenv(dotenv_path=dotenv_path, override=True)
 
 async def main():
-    from app.agents.langchain_agent import LangChainAgentRouter
-    router = LangChainAgentRouter()
+    from app.agents.orchestrator import TravelAgentOrchestrator
+    router = TravelAgentOrchestrator()
     
     # Run a message on a thread
     thread_id = "test_inspect_checkpointer"

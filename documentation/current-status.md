@@ -11,7 +11,7 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
 ### ✅ Funcionalidades Completadas
 
 #### 1. Integración OpenAI GPT
-- **Modelo**: GPT-4o-mini
+- **Modelo**: gpt-5-nano
 - **Funcionalidades**:
   - Clasificación inteligente e invocación directa de herramientas asíncronas estructuradas.
   - Generación de respuestas contextuales enriquecidas por RAG.
@@ -33,8 +33,8 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
  **Herramientas**: 9 herramientas estructuradas de dominio registradas con esquemas de parámetros JSON.
 
 #### 4. Orquestación y Arquitectura Multi-Agente con Supervisor
-- **Framework**: LangChain + LangGraph + `MemorySaver` en SQLite.
-- **Patrón de Orquestación**: Arquitectura Multi-Agente basada en un Supervisor Central con Habilidades de Enrutamiento Cognitivo Unificado (`app/agents/supervisor/`) y sub-agentes modularizados especialistas en subcarpetas dedicadas:
+- **Framework**: LangChain + LangGraph (con sub-agentes Stateless).
+- **Patrón de Orquestación**: Arquitectura Multi-Agente basada en un Supervisor Central con Habilidades de Enrutamiento Cognitivo Unificado (`app/agents/supervisor/`) y sub-agentes modularizados especialistas sin estado, con inyección de historial y contexto desde SQLite.
   - **Finance Agent**: Aislado en `app/agents/finance/` con herramientas e instrucciones del dominio de gastos y finanzas.
   - **Reminder Agent**: Confinado en `app/agents/reminder/` exclusivamente a herramientas de creación, modificación y listado de recordatorios.
   - **General Agent**: Administra el flujo del RAG para normativas de viaje y soporte local desde `app/agents/general/`.
@@ -44,7 +44,7 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
   - *Interacción Directa*: Capacidad del Supervisor para responder Smalltalk o clarificar dudas ambiguas directamente sin enrutamiento agéntico.
 - **Conectividad y Robustez**: Uso de `AsyncExitStack` paraStreams SSE paralelos.
 - **Validación Dinámica**: Mapeo robusto e instantáneo de catálogos MCP a Pydantic V2.
-- **Salvedades de Persistencia y Memoria**: Poda del historial a un máximo de 8 mensajes para evitar desbordes de ventana y especificación obligatoria de `as_node="model"` en las transacciones para erradicar errores de ambigüedad conversacional en LangGraph.
+- **Salvedades de Persistencia y Memoria**: Persistencia de mensajes estructurada en SQLite con alineación de turnos (User-Assistant Symmetry) garantizada y tolerancia a fallos. Eliminación completa de la dependencia de checkpointers en sub-agentes para erradicar contaminaciones cruzadas y token overhead.
 
 #### 5. Capa de Servicios de Dominio (Clean Architecture)
 - La lógica de negocio principal está centralizada en los módulos de persistencia bajo `app/services/persistence/`.
@@ -60,6 +60,14 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
 - **API REST**: 7 endpoints unificados en el puerto `8000`.
 - **Bot Telegram**: Integración opcional lista para producción mediante Token de Telegram.
 - **Frontend Web**: Consola interactiva en HTML/JS con gráficos agregados en tiempo real.
+
+#### 8. Monitoreo y Observabilidad (LangSmith)
+- **Framework**: Integración nativa con la suite de observabilidad de LangSmith.
+- **Características**:
+  - Decoradores `@traceable` en las funciones críticas de `TravelAgentOrchestrator` (`_run_specialized_agent` y `handle_message`).
+  - Monitoreo en tiempo real de flujos agénticos de decisión (enrutamiento de supervisor y ejecución de agentes específicos).
+  - Trazabilidad de latencia, coste de tokens, llamadas al LLM e interacciones con herramientas.
+  - Modo autocontenido pasivo (*no-op*) integrado: si no están presentes las credenciales correspondientes en el entorno, el código se ejecuta de forma habitual sin interrupciones.
 
 ---
 
@@ -79,13 +87,14 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
   - `app/agents/finance/`: Sub-agente financiero con su constructor `agent.py` y prompts dedicados.
   - `app/agents/reminder/`: Sub-agente de recordatorios con su constructor `agent.py` y prompts dedicados.
   - `app/agents/general/`: Sub-agente general con su constructor `agent.py` y prompts dedicados.
-  - `app/agents/prompts.py`: Repositorio simplificado que conserva únicamente el prompt general de fallback (`AGENT_SYSTEM_PROMPT`).
+  - **Limpieza de Fallback**: Eliminación completa de `app/agents/prompts.py` (antiguo prompt general de fallback), delegando toda petición de ruta no reconocida directamente al agente `general` de forma robusta.
 
-#### 3. Estabilidad y Gestión de Memoria en LangGraph
-- **Bypass de Inconsistencia del Checkpointer**: Solución al fallo de pérdida del mensaje inicial del usuario al derivar a sub-agentes en LangGraph. Se fuerza la persistencia explícita de `HumanMessage` en el checkpointer conversacional (`aupdate_state`) previo a la ejecución del especialista, asegurando una línea de tiempo transaccional íntegra.
-- **Evitación de Colisiones de Estado**: Corrección del error crítico `InvalidUpdateError: Ambiguous update` al escribir en hilos conversacionales inyectando el parámetro `as_node="model"` en las transacciones.
-- **Filtrado Conversacional Selectivo (`_get_clean_history`)**: Limpieza automática de las herramientas de bajo nivel y tags del historial conversacional antes de alimentar al Supervisor, mejorando la precisión de clasificación del Sticky Routing en un 100%.
-- **Poda por Turnos Completos**: Poda inteligente dinámica que conserva los últimos 3 turnos completos conversacionales de usuario para mantener el contexto libre de ruido y veloz.
+#### 3. Estabilidad y Gestión de Memoria Stateless
+- **Conversión a Sub-agentes Stateless**: Los sub-agentes se ejecutan sin checkpointers y sin estado compartido, eliminando la duplicación del historial, la sobrecarga de tokens por llamadas internas a herramientas MCP pasadas, y la contaminación de estado cruzado.
+- **Distribución de Herramientas desde el Orquestador**: Las herramientas dinámicas descubiertas de servidores MCP se asocian a su URL/Puerto de origen y se distribuyen selectivamente a cada sub-agente, desacoplándolos de lógica de filtrado dura.
+- **Contexto Global de Fechas**: Inyección de un resolver dinámico de fechas relativas (`app/utils/date_resolution.py`) en recordatorios y finanzas, permitiendo que ambos interpreten adecuadamente expresiones como "ayer", "este viernes", etc.
+- **Robustez de Errores con ToolException**: Implementación de excepciones estructuradas (`ToolException`) con captura controlada (`handle_tool_error=True`) en todas las herramientas MCP para informar de forma segura al LLM sobre caídas de red o fallos de transacciones.
+- **Garantía de Turnos en BD**: Guardado temprano de mensajes del usuario para asegurar la integridad de la base de datos de chats en SQLite frente a excepciones durante el flujo de ejecución.
 
 #### 4. Unificación en el Backend de Presentación
 - El endpoint `/status` se actualizó para interrogar concurrentemente a los servidores de herramientas MCP en sus respectivos puertos, calculando la disponibilidad del sistema de forma global y agregada.
@@ -103,6 +112,7 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
 | Servicios de Dominio | 4 (+ fachada) |
 | Validación de Parámetros | Pydantic V2 Dinámico |
 | Cobertura RAG | Documentos TXT y PDF unificados |
+| Observabilidad y Monitoreo | Integración nativa con LangSmith |
 
 ---
 
@@ -118,8 +128,7 @@ travel-assistant/
 │   │   └── endpoints.py                # 7 endpoints unificados
 │   ├── agents/                         # Módulo de agentes y orquestación
 │   │   ├── __init__.py
-│   │   ├── langchain_agent.py          # Cliente Multiserver asíncrono con Pydantic y persistencia
-│   │   ├── prompts.py                  # Prompts comunes/fallback (AGENT_SYSTEM_PROMPT)
+│   │   ├── orchestrator.py             # Cliente Multiserver asíncrono con Pydantic y persistencia
 │   │   ├── tools.py                    # Herramientas locales del agente (rules, logistics)
 │   │   ├── supervisor/                 # Agente Supervisor y Enrutador Cognitivo
 │   │   │   ├── __init__.py
@@ -133,7 +142,8 @@ travel-assistant/
 │   │   ├── reminder/                   # Agente Especialista en Recordatorios
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica de construcción del sub-agente
-│   │   │   └── prompts.py              # REMINDER_AGENT_SYSTEM_PROMPT
+│   │   │   ├── prompts.py              # REMINDER_AGENT_SYSTEM_PROMPT
+│   │   │   └── reminder_skill.md       # Especificación del Skill de Recordatorios
 │   │   └── general/                    # Agente Especialista en RAG y Logística
 │   │       ├── __init__.py
 │   │       ├── agent.py                # Lógica de construcción del sub-agente

@@ -20,14 +20,13 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from .api.endpoints import router as api_router
-from .agents.langchain_agent import LangChainAgentRouter
+from .agents.orchestrator import TravelAgentOrchestrator
 from .services.persistence.db import init_db
-from .services.rag import init_rag
 from .connectors.telegram_bot import TelegramBotService
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-router = LangChainAgentRouter()
+orchestrator = TravelAgentOrchestrator()
 telegram_service = None
 logger = logging.getLogger(__name__)
 
@@ -37,18 +36,18 @@ async def lifespan(app: FastAPI):
     global telegram_service
     # Startup: initialize DB, RAG, and httpx.AsyncClient
     init_db()
-    init_rag()
+    # RAG se inicializa bajo demanda al llamar query_normative_documents()
     
     app.state.http_client = httpx.AsyncClient(timeout=3.0)
     
     # Pre-connect MCP servers to prevent latency on the first message
     try:
-        await router.get_sessions()
+        await orchestrator.get_sessions()
     except Exception as exc:
         logger.warning("Could not pre-connect MCP servers during startup: %s", exc)
     
     if TELEGRAM_TOKEN:
-        telegram_service = TelegramBotService(router, token=TELEGRAM_TOKEN)
+        telegram_service = TelegramBotService(orchestrator, token=TELEGRAM_TOKEN)
         try:
             telegram_service.start()
         except Exception as exc:
@@ -65,7 +64,7 @@ async def lifespan(app: FastAPI):
     
     # Cleanly close MCP connections
     try:
-        await router.stop()
+        await orchestrator.stop()
     except Exception as exc:
         logger.warning("Error closing persistent MCP connections during shutdown: %s", exc)
 
@@ -80,7 +79,7 @@ app = FastAPI(
 frontend_dir = Path(__file__).resolve().parent / "frontend"
 app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
-app.state.message_router = router
+app.state.message_orchestrator = orchestrator
 app.state.telegram_service = None
 app.state.telegram_token = bool(TELEGRAM_TOKEN)
 

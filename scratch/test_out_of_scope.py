@@ -27,8 +27,8 @@ async def test_query(router, query: str, thread_id: str):
 
 async def main():
     sys.path.append(os.getcwd())
-    from app.agents.langchain_agent import LangChainAgentRouter
-    router = LangChainAgentRouter()
+    from app.agents.orchestrator import TravelAgentOrchestrator
+    router = TravelAgentOrchestrator()
     
     # 1. Fuera de ámbito en español (Compra de auto)
     await test_query(router, "Que auto es bueno para comprar?", "thread_out_1")
