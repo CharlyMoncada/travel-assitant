@@ -21,6 +21,8 @@ from .supervisor import run_supervisor
 from .finance import create_finance_agent
 from .reminder import create_reminder_agent
 from .general import create_general_agent
+from .recommender import create_recommender_agent
+from .recommender.tools import get_recommender_tools
 
 logger = logging.getLogger(__name__)
 
@@ -363,6 +365,9 @@ class LangChainAgentRouter:
             specialized_agent = create_reminder_agent(llm, langchain_tools, self.memory)
         elif route == "general":
             specialized_agent = create_general_agent(llm, local_tools, self.memory)
+        elif route == "recommender":
+            recommender_tools = get_recommender_tools()
+            specialized_agent = create_recommender_agent(llm, recommender_tools, self.memory)
         else:
             logger.warning("Unknown route '%s', using all available tools as fallback", route)
             from langchain.agents import create_agent
