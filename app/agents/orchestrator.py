@@ -22,8 +22,19 @@ from ..services.persistence.memory_persistence import (
     save_user_memory,
 )
 from .finance import create_finance_agent
+from .finance.guardrails import (
+    check_finance_language,
+    check_prompt_injection as _check_injection,
+    REJECTION_MESSAGE as FINANCE_REJECTION_LANGUAGE,
+    REJECTION_MESSAGE_INJECTION as FINANCE_REJECTION_INJECTION,
+)
 from .general import create_general_agent
 from .reminder import create_reminder_agent
+from .reminder.guardrails import (
+    check_reminder_language,
+    REJECTION_MESSAGE as REMINDER_REJECTION_LANGUAGE,
+    REJECTION_MESSAGE_INJECTION as REMINDER_REJECTION_INJECTION,
+)
 from .supervisor import run_supervisor
 
 logger = logging.getLogger(__name__)
@@ -597,6 +608,72 @@ class TravelAgentOrchestrator:
             )
 
 
+
+            # --- Guardrails del Agente de Finanzas ---
+            if route == "finance":
+                # 1. Idioma
+                allowed, detected_lang = check_finance_language(message)
+                if not allowed:
+                    logger.info("Finance language guardrail blocked (lang='%s')", detected_lang)
+                    try:
+                        save_message(thread_id, "assistant", FINANCE_REJECTION_LANGUAGE)
+                    except Exception as e:
+                        logger.warning("Could not persist finance language rejection: %s", e)
+                    return {
+                        "llm_used": False,
+                        "llm_tool": "finance_language_guardrail",
+                        "agent_used": "finance_guardrail",
+                        "tool_response": None,
+                        "message": FINANCE_REJECTION_LANGUAGE,
+                    }
+                # 2. Prompt injection
+                is_safe, matched_pattern = _check_injection(message)
+                if not is_safe:
+                    logger.warning("Finance injection guardrail blocked (pattern='%s')", matched_pattern)
+                    try:
+                        save_message(thread_id, "assistant", FINANCE_REJECTION_INJECTION)
+                    except Exception as e:
+                        logger.warning("Could not persist finance injection rejection: %s", e)
+                    return {
+                        "llm_used": False,
+                        "llm_tool": "finance_injection_guardrail",
+                        "agent_used": "finance_guardrail",
+                        "tool_response": None,
+                        "message": FINANCE_REJECTION_INJECTION,
+                    }
+
+            # --- Guardrails del Agente de Recordatorios ---
+            elif route == "reminder":
+                # 1. Idioma
+                allowed, detected_lang = check_reminder_language(message)
+                if not allowed:
+                    logger.info("Reminder language guardrail blocked (lang='%s')", detected_lang)
+                    try:
+                        save_message(thread_id, "assistant", REMINDER_REJECTION_LANGUAGE)
+                    except Exception as e:
+                        logger.warning("Could not persist reminder language rejection: %s", e)
+                    return {
+                        "llm_used": False,
+                        "llm_tool": "reminder_language_guardrail",
+                        "agent_used": "reminder_guardrail",
+                        "tool_response": None,
+                        "message": REMINDER_REJECTION_LANGUAGE,
+                    }
+                # 2. Prompt injection
+                is_safe, matched_pattern = _check_injection(message)
+                if not is_safe:
+                    logger.warning("Reminder injection guardrail blocked (pattern='%s')", matched_pattern)
+                    try:
+                        save_message(thread_id, "assistant", REMINDER_REJECTION_INJECTION)
+                    except Exception as e:
+                        logger.warning("Could not persist reminder injection rejection: %s", e)
+                    return {
+                        "llm_used": False,
+                        "llm_tool": "reminder_injection_guardrail",
+                        "agent_used": "reminder_guardrail",
+                        "tool_response": None,
+                        "message": REMINDER_REJECTION_INJECTION,
+                    }
 
             agent_response, output = await self._run_specialized_agent(
                 llm,
