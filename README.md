@@ -124,6 +124,9 @@ source .venv/bin/activate  # Linux/Mac
 
 # Instalar dependencias requeridas
 pip install -r requirements.txt
+
+# Dependencia de detección de idioma (incluida en requirements.txt)
+pip install langdetect
 ```
 
 ### 3. Variables de entorno

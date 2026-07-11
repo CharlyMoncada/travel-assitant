@@ -22,6 +22,7 @@ from ..services.persistence.memory_persistence import (
     save_user_memory,
 )
 from .finance import create_finance_agent
+from .finance.guardrails import check_finance_language, REJECTION_MESSAGE
 from .general import create_general_agent
 from .reminder import create_reminder_agent
 from .supervisor import run_supervisor
@@ -597,6 +598,25 @@ class TravelAgentOrchestrator:
             )
 
 
+
+            if route == "finance":
+                allowed, detected_lang = check_finance_language(message)
+                if not allowed:
+                    logger.info(
+                        "Finance guardrail blocked message (detected language: '%s')",
+                        detected_lang,
+                    )
+                    try:
+                        save_message(thread_id, "assistant", REJECTION_MESSAGE)
+                    except Exception as e:
+                        logger.warning("Could not persist guardrail rejection message: %s", e)
+                    return {
+                        "llm_used": False,
+                        "llm_tool": "finance_guardrail",
+                        "agent_used": "finance_guardrail",
+                        "tool_response": None,
+                        "message": REJECTION_MESSAGE,
+                    }
 
             agent_response, output = await self._run_specialized_agent(
                 llm,
