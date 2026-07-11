@@ -1,164 +1,164 @@
-# Finance Service
+# Servicio de Finanzas
 
-## Overview
+## Descripción general
 
-The Finance Service is the subsystem of the Travel Assistant responsible for managing all financial transactions during a trip. It is implemented as a decoupled, two-layer architecture:
+El Servicio de Finanzas es el subsistema del Travel Assistant responsable de gestionar todas las transacciones económicas durante un viaje. Se implementa con una arquitectura desacoplada en dos capas:
 
-1. **Finance Agent** (`app/agents/finance/`) — a LangChain sub-agent specialised exclusively in expense management, invoked by the orchestrator when the Supervisor routes a message to the `finance` domain.
-2. **Finance MCP Server** (`app/mcp/finance/`) — an independent FastAPI process running on port `8002` that exposes CRUD expense tools over the Model Context Protocol (MCP) via Server-Sent Events (SSE).
+1. **Agente de Finanzas** (`app/agents/finance/`) — sub-agente LangChain especializado exclusivamente en gestión de gastos, invocado por el orquestador cuando el Supervisor enruta un mensaje al dominio `finance`.
+2. **Servidor MCP de Finanzas** (`app/mcp/finance/`) — proceso FastAPI independiente que corre en el puerto `8002` y expone herramientas CRUD de gastos a través del Model Context Protocol (MCP) mediante Server-Sent Events (SSE).
 
 ---
 
-## Architecture
+## Arquitectura
 
 ```mermaid
 flowchart TD
     orchestrator["TravelAgentOrchestrator\n(orchestrator.py)"]
 
-    subgraph financeLayer ["Finance Layer"]
-        guardrail["Language Guardrail\n(guardrails.py)"]
-        agent["Finance Agent\n(agent.py + prompts.py)"]
+    subgraph financeLayer ["Capa de Finanzas"]
+        guardrail["Guardrail de Idioma\n(guardrails.py)"]
+        agent["Agente de Finanzas\n(agent.py + prompts.py)"]
     end
 
-    subgraph mcpServer ["Finance MCP Server (Port 8002)"]
-        server["FastAPI + SSE Transport\n(server.py)"]
-        tools["Tool Definitions\n(tools.py)"]
+    subgraph mcpServer ["Servidor MCP de Finanzas (Puerto 8002)"]
+        server["FastAPI + Transporte SSE\n(server.py)"]
+        tools["Definiciones de Herramientas\n(tools.py)"]
         server --> tools
     end
 
-    subgraph persistence ["Persistence Layer"]
+    subgraph persistence ["Capa de Persistencia"]
         expPersist["expense_persistence.py"]
         db[("SQLite\ntravel_assistant.db")]
         expPersist --> db
     end
 
     orchestrator -->|"route = finance"| guardrail
-    guardrail -->|"EN or ES"| agent
-    agent -->|"SSE tool call"| server
+    guardrail -->|"EN o ES"| agent
+    agent -->|"llamada SSE"| server
     server --> expPersist
 ```
 
 ---
 
-## Finance Agent (`app/agents/finance/`)
+## Agente de Finanzas (`app/agents/finance/`)
 
-### Files
+### Archivos
 
-| File | Purpose |
-|------|---------|
-| `agent.py` | Factory function `create_finance_agent(llm, tools)` that compiles the LangGraph agent |
-| `prompts.py` | `get_finance_system_prompt()` — builds the finance-specific system prompt |
-| `guardrails.py` | `check_finance_language(text)` — blocks non-EN/ES input before agent invocation |
+| Archivo | Propósito |
+|---------|-----------|
+| `agent.py` | Función fábrica `create_finance_agent(llm, tools)` que compila el agente LangGraph |
+| `prompts.py` | `get_finance_system_prompt()` — construye el prompt de sistema específico de finanzas |
+| `guardrails.py` | `check_finance_language(text)` — bloquea la entrada que no sea EN/ES antes de invocar el agente |
 
-### Agent behaviour
+### Comportamiento del agente
 
-- Created via `create_agent(llm, tools, system_prompt=...)` from LangChain.
-- Receives only the finance-specific tools discovered from the Finance MCP Server (port `8002`), preventing any cross-domain tool contamination.
-- Stateless: no internal checkpointer. Memory and conversation history are injected as context by the orchestrator.
+- Creado mediante `create_agent(llm, tools, system_prompt=...)` de LangChain.
+- Recibe únicamente las herramientas de finanzas descubiertas desde el Servidor MCP de Finanzas (puerto `8002`), evitando cualquier contaminación cruzada de herramientas entre dominios.
+- Sin estado (stateless): sin checkpointer interno. La memoria e historial de conversación son inyectados como contexto por el orquestador.
 
-### System prompt directives (`prompts.py`)
+### Directrices del prompt de sistema (`prompts.py`)
 
-1. **Tool selection**: maps user intent directly to the correct MCP tool (`budget`, `query_expenses`, `record_expense`, `modify_expense`, `delete_expense`).
-2. **Structured Markdown output**: when tool data is available, the agent always renders a full breakdown — total, count, per-category summary, and dated item list.
-3. **Multilingual**: always replies in the language the user wrote in (English or Spanish).
-4. **Date resolution**: resolves relative date expressions (e.g. "yesterday", "last week") using the injected current date context and filters results client-side, since the tools do not accept date parameters.
+1. **Selección de herramienta**: mapea directamente la intención del usuario a la herramienta MCP correcta (`budget`, `query_expenses`, `record_expense`, `modify_expense`, `delete_expense`).
+2. **Salida estructurada en Markdown**: cuando los datos de la herramienta están disponibles, el agente siempre renderiza un desglose completo — total, recuento, resumen por categoría y lista de ítems con fecha.
+3. **Multilingüe**: responde siempre en el idioma en que el usuario escribe (inglés o español).
+4. **Resolución de fechas**: resuelve expresiones de fecha relativas (p. ej., "ayer", "la semana pasada") usando el contexto de fecha actual inyectado y filtra los resultados en el cliente, ya que las herramientas no aceptan parámetros de fecha.
 
-### Language Guardrail
+### Guardrail de idioma
 
-Before the Finance Agent is ever invoked, the orchestrator calls `check_finance_language(message)`. See [Finance Language Guardrail](Finance%20Language%20Guardrail.md) for full details.
+Antes de invocar el Agente de Finanzas, el orquestador llama a `check_finance_language(message)`. Consulta [Guardrail de Idioma para el Servicio de Finanzas](Finance%20Language%20Guardrail.md) para todos los detalles.
 
 ---
 
-## Finance MCP Server (`app/mcp/finance/`)
+## Servidor MCP de Finanzas (`app/mcp/finance/`)
 
-### Files
+### Archivos
 
-| File | Purpose |
-|------|---------|
-| `server.py` | FastAPI app, SSE transport setup, MCP tool handlers, and `run()` entrypoint |
-| `tools.py` | `EXPENSE_TOOLS` — structured `mcp.types.Tool` definitions for all 5 tools |
+| Archivo | Propósito |
+|---------|-----------|
+| `server.py` | Aplicación FastAPI, configuración del transporte SSE, manejadores de herramientas MCP y punto de entrada `run()` |
+| `tools.py` | `EXPENSE_TOOLS` — definiciones estructuradas `mcp.types.Tool` para las 5 herramientas |
 
 ### Endpoints
 
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/sse` | SSE stream endpoint for MCP client connections |
-| `POST` | `/messages` | Message posting endpoint for MCP protocol |
-| `GET` | `/status` | Returns server health and full tool catalog |
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| `GET` | `/sse` | Endpoint de stream SSE para conexiones de clientes MCP |
+| `POST` | `/messages` | Endpoint de envío de mensajes para el protocolo MCP |
+| `GET` | `/status` | Devuelve el estado del servidor y el catálogo completo de herramientas |
 
-### MCP Tools
+### Herramientas MCP
 
-| Tool | Required params | Optional params | Description |
-|------|----------------|-----------------|-------------|
-| `record_expense` | `amount` (float), `description` (str), `category` (str) | — | Records a new expense in the database |
-| `query_expenses` | — | `category` (str) | Returns all expenses, optionally filtered by category |
-| `budget` | — | — | Returns total budget summary with per-category breakdown |
-| `modify_expense` | `id` (int) | `amount`, `description`, `category` | Updates one or more fields of an existing expense |
-| `delete_expense` | `id` (int) | — | Permanently deletes an expense from the database |
+| Herramienta | Parámetros requeridos | Parámetros opcionales | Descripción |
+|-------------|----------------------|-----------------------|-------------|
+| `record_expense` | `amount` (float), `description` (str), `category` (str) | — | Registra un nuevo gasto en la base de datos |
+| `query_expenses` | — | `category` (str) | Devuelve todos los gastos, con filtrado opcional por categoría |
+| `budget` | — | — | Devuelve el resumen total del presupuesto con desglose por categoría |
+| `modify_expense` | `id` (int) | `amount`, `description`, `category` | Actualiza uno o varios campos de un gasto existente |
+| `delete_expense` | `id` (int) | — | Elimina permanentemente un gasto de la base de datos |
 
-### Transport
+### Transporte
 
-The server uses `mcp.server.sse.SseServerTransport` mounted on `/messages`. Two ASGI wrapper classes (`SSEASGIApp`, `MessageASGIApp`) are registered as Starlette `Route` objects to bypass FastAPI's default `request_response` wrapping, which is incompatible with the MCP SSE protocol.
+El servidor usa `mcp.server.sse.SseServerTransport` montado en `/messages`. Dos clases ASGI envolventes (`SSEASGIApp`, `MessageASGIApp`) se registran como objetos `Route` de Starlette para evitar el envoltorio `request_response` por defecto de FastAPI, que es incompatible con el protocolo SSE de MCP.
 
 ---
 
-## Persistence Layer (`app/services/persistence/expense_persistence.py`)
+## Capa de Persistencia (`app/services/persistence/expense_persistence.py`)
 
-The MCP server delegates all database operations to `expense_persistence.py`, which wraps SQLAlchemy calls against the shared SQLite database (`travel_assistant.db`).
+El Servidor MCP delega todas las operaciones de base de datos a `expense_persistence.py`, que envuelve las llamadas SQLAlchemy contra la base de datos SQLite compartida (`travel_assistant.db`).
 
-| Function | Operation |
-|----------|-----------|
+| Función | Operación |
+|---------|-----------|
 | `save_expense(description, amount, category)` | INSERT |
-| `get_expense_summary()` | SELECT all + aggregate by category |
+| `get_expense_summary()` | SELECT todos + agregado por categoría |
 | `modify_expense(id, ...)` | UPDATE |
 | `delete_expense(id)` | DELETE |
 
 ---
 
-## Configuration
+## Configuración
 
-| Environment variable | Default | Description |
-|----------------------|---------|-------------|
-| `MCP_SERVERS` | `http://localhost:8002/sse/,...` | Comma-separated SSE URLs consumed by the orchestrator |
-| `MCP_FINANCE_SERVER_STATUS_URL` | `http://localhost:8002/status` | URL polled by the main backend's `/status` endpoint |
-| `UVICORN_RELOAD` | `false` | Set to `true` to enable hot-reload during development |
+| Variable de entorno | Valor por defecto | Descripción |
+|--------------------|-------------------|-------------|
+| `MCP_SERVERS` | `http://localhost:8002/sse/,...` | URLs SSE separadas por comas consumidas por el orquestador |
+| `MCP_FINANCE_SERVER_STATUS_URL` | `http://localhost:8002/status` | URL consultada por el endpoint `/status` del backend principal |
+| `UVICORN_RELOAD` | `false` | Fijar a `true` para habilitar hot-reload durante el desarrollo |
 
 ---
 
-## Running the Finance MCP Server
+## Arranque del Servidor MCP de Finanzas
 
-### As part of the full system (recommended)
+### Como parte del sistema completo (recomendado)
 
 ```bash
 ./start.sh
 ```
 
-Logs are written to `logs/finance.log`.
+Los logs se escriben en `logs/finance.log`.
 
-### Standalone
+### De forma independiente
 
 ```bash
 python -m app.mcp.finance.server
 ```
 
-The server starts on `http://0.0.0.0:8002`.
+El servidor arranca en `http://0.0.0.0:8002`.
 
 ---
 
-## E2E Test Examples
+## Ejemplos de prueba E2E
 
 ```bash
-# Record an expense (routes to finance agent → record_expense tool)
+# Registrar un gasto (enruta al agente de finanzas → herramienta record_expense)
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
-  -d '{"text": "Add an expense of 35 euros for dinner", "session_id": "fin_test"}'
+  -d '{"text": "Anota un gasto de 35 euros por cena", "session_id": "fin_test"}'
 
-# Query all expenses
+# Consultar todos los gastos
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
-  -d '{"text": "Show me all my expenses", "session_id": "fin_test"}'
+  -d '{"text": "Muéstrame todos mis gastos", "session_id": "fin_test"}'
 
-# Guardrail test — should be blocked
+# Prueba del guardrail — debe ser bloqueado
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d '{"text": "Enregistre une dépense de 20 euros pour le taxi", "session_id": "fin_test"}'

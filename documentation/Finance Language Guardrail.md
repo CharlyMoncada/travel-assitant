@@ -1,42 +1,42 @@
-# Finance Language Guardrail
+# Guardrail de Idioma para el Servicio de Finanzas
 
-## Overview
+## Descripción general
 
-The Finance Language Guardrail is a pre-invocation safety layer applied exclusively to the Finance Agent. It intercepts any message routed to the finance domain and blocks execution if the user's input is not written in English (`en`) or Spanish (`es`). Blocked requests receive an immediate bilingual rejection message without consuming any LLM tokens or MCP tool calls.
+El Guardrail de Idioma del Servicio de Finanzas es una capa de seguridad previa a la invocación, aplicada exclusivamente al Agente de Finanzas. Intercepta cualquier mensaje enrutado al dominio financiero y bloquea su ejecución si el texto del usuario no está escrito en inglés (`en`) o español (`es`). Las solicitudes bloqueadas reciben un mensaje de rechazo bilingüe de forma inmediata, sin consumir tokens de LLM ni llamadas a herramientas MCP.
 
 ---
 
-## Architecture
+## Arquitectura
 
-The guardrail sits between the Supervisor routing decision and the Finance Agent invocation inside `TravelAgentOrchestrator`:
+El guardrail se sitúa entre la decisión de enrutamiento del Supervisor y la invocación del Agente de Finanzas, dentro de `TravelAgentOrchestrator`:
 
 ```mermaid
 flowchart TD
-    userMsg["User message"] --> supervisor["Supervisor LLM\n(orchestrator.py)"]
-    supervisor -->|"route = finance"| guardrail["Language Guardrail\n(guardrails.py)"]
-    guardrail -->|"EN or ES — allowed"| financeAgent["Finance Agent\n(agent.py)"]
-    guardrail -->|"other language — blocked"| rejection["Bilingual rejection message"]
-    financeAgent --> response["Response to user"]
+    userMsg["Mensaje del usuario"] --> supervisor["Supervisor LLM\n(orchestrator.py)"]
+    supervisor -->|"route = finance"| guardrail["Guardrail de Idioma\n(guardrails.py)"]
+    guardrail -->|"EN o ES — permitido"| financeAgent["Agente de Finanzas\n(agent.py)"]
+    guardrail -->|"otro idioma — bloqueado"| rejection["Mensaje de rechazo bilingüe"]
+    financeAgent --> response["Respuesta al usuario"]
     rejection --> response
 ```
 
 ---
 
-## Implementation
+## Implementación
 
-### Files involved
+### Archivos implicados
 
-| File | Role |
-|------|------|
-| `app/agents/finance/guardrails.py` | Guardrail module: language detection logic and rejection constant |
-| `app/agents/orchestrator.py` | Wires the guardrail check before invoking `_run_specialized_agent` |
-| `requirements.txt` | Declares the `langdetect` dependency |
+| Archivo | Rol |
+|---------|-----|
+| `app/agents/finance/guardrails.py` | Módulo guardrail: lógica de detección de idioma y constante de rechazo |
+| `app/agents/orchestrator.py` | Conecta la comprobación del guardrail antes de invocar `_run_specialized_agent` |
+| `requirements.txt` | Declara la dependencia `langdetect` |
 
 ---
 
-### 1. Guardrail module (`app/agents/finance/guardrails.py`)
+### 1. Módulo guardrail (`app/agents/finance/guardrails.py`)
 
-Uses the `langdetect` library to detect the ISO 639-1 language code of the incoming text. Only `en` and `es` are in the allow-list. Any other code — including `unknown` (returned when detection fails) — is rejected.
+Utiliza la librería `langdetect` para detectar el código de idioma ISO 639-1 del texto de entrada. Solo `en` y `es` están en la lista de idiomas permitidos. Cualquier otro código —incluyendo `unknown` (devuelto cuando la detección falla)— es rechazado.
 
 ```python
 from langdetect import detect, LangDetectException
@@ -50,8 +50,8 @@ REJECTION_MESSAGE = (
 
 def check_finance_language(text: str) -> tuple[bool, str]:
     """
-    Returns (is_allowed, detected_lang).
-    Allows English (en) and Spanish (es). Blocks everything else.
+    Devuelve (is_allowed, detected_lang).
+    Permite inglés (en) y español (es). Bloquea cualquier otro idioma.
     """
     try:
         lang = detect(text)
@@ -62,9 +62,9 @@ def check_finance_language(text: str) -> tuple[bool, str]:
 
 ---
 
-### 2. Orchestrator integration (`app/agents/orchestrator.py`)
+### 2. Integración en el orquestador (`app/agents/orchestrator.py`)
 
-The check is inserted in `handle_message`, after `run_supervisor` returns `route == "finance"` and before `_run_specialized_agent` is called:
+La comprobación se inserta en `handle_message`, tras recibir `route == "finance"` del Supervisor y antes de llamar a `_run_specialized_agent`:
 
 ```python
 if route == "finance":
@@ -84,40 +84,40 @@ if route == "finance":
         }
 ```
 
-The `message` variable used for detection is always the **raw user input** (before memory context is injected), ensuring the language check is clean and unaffected by system context text.
+La variable `message` utilizada para la detección es siempre el **texto crudo del usuario** (antes de que se inyecte el contexto de memoria), garantizando que la comprobación de idioma sea limpia y no se vea afectada por texto de contexto del sistema.
 
 ---
 
-## Dependency
+## Dependencia
 
-`langdetect` is a pure-Python port of Google's language detection library. It requires no external API calls and supports 55 languages.
+`langdetect` es un port Python puro de la librería de detección de idioma de Google. No requiere llamadas a APIs externas y soporta 55 idiomas.
 
 ```bash
 pip install langdetect
 ```
 
-It is declared in `requirements.txt` and will be installed automatically with `pip install -r requirements.txt`.
+Se declara en `requirements.txt` y se instala automáticamente con `pip install -r requirements.txt`.
 
 ---
 
-## Behavior
+## Comportamiento
 
-| Input language | Detected code | Action |
-|----------------|---------------|--------|
-| English | `en` | Allowed — Finance Agent is invoked |
-| Spanish | `es` | Allowed — Finance Agent is invoked |
-| French | `fr` | Blocked — bilingual rejection returned |
-| German | `de` | Blocked — bilingual rejection returned |
-| Chinese | `zh-cn` | Blocked — bilingual rejection returned |
-| Undetectable text | `unknown` | Blocked — bilingual rejection returned |
+| Idioma de entrada | Código detectado | Acción |
+|-------------------|------------------|--------|
+| Inglés | `en` | Permitido — se invoca el Agente de Finanzas |
+| Español | `es` | Permitido — se invoca el Agente de Finanzas |
+| Francés | `fr` | Bloqueado — se devuelve el rechazo bilingüe |
+| Alemán | `de` | Bloqueado — se devuelve el rechazo bilingüe |
+| Chino | `zh-cn` | Bloqueado — se devuelve el rechazo bilingüe |
+| Texto no detectable | `unknown` | Bloqueado — se devuelve el rechazo bilingüe |
 
 ---
 
-## Rejection message
+## Mensaje de rechazo
 
 ```
 Sorry, the finance assistant only supports English and Spanish.
 Lo siento, el asistente de finanzas solo admite inglés y español.
 ```
 
-The rejection is persisted to the conversation history (same as any other assistant message) so it appears correctly in the chat thread.
+El rechazo se persiste en el historial de conversación (igual que cualquier otro mensaje del asistente) para que aparezca correctamente en el hilo del chat.
