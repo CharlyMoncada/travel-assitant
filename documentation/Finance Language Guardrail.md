@@ -88,9 +88,28 @@ La variable `message` utilizada para la detección es siempre el **texto crudo d
 
 ---
 
-## Dependencia
+## Dependencia: `langdetect`
 
-`langdetect` es un port Python puro de la librería de detección de idioma de Google. No requiere llamadas a APIs externas y soporta 55 idiomas.
+`langdetect` es un port Python puro de la librería de detección de idioma de Google (`language-detection`). Analiza la distribución estadística de n-gramas de caracteres en el texto para inferir su idioma, sin necesidad de conexión a internet ni llamadas a APIs externas.
+
+### ¿Por qué `langdetect` y no otra alternativa?
+
+| Criterio | `langdetect` | LLM (OpenAI) | `lingua-language-detector` |
+|----------|-------------|-------------|---------------------------|
+| Coste por llamada | Cero | Tokens OpenAI | Cero |
+| Latencia | < 5 ms | ~500–2000 ms | < 5 ms |
+| Idiomas soportados | 55 | Todos | 75 |
+| Instalación | `pip install langdetect` | Ya disponible | `pip install lingua-language-detector` |
+| Precisión en textos cortos | Media-alta | Muy alta | Alta |
+
+Se eligió `langdetect` por su coste cero, latencia despreciable y precisión suficiente para frases de usuario típicas en contexto financiero. El guardrail no necesita detectar dialectos ni lenguas minoritarias — solo distinguir EN/ES del resto.
+
+### ¿Cómo lo usamos?
+
+En `guardrails.py` se importan dos elementos de la librería:
+
+- `detect(text)` — devuelve el código ISO 639-1 del idioma detectado (p. ej. `"es"`, `"en"`, `"fr"`).
+- `LangDetectException` — excepción lanzada cuando el texto es demasiado corto o ambiguo para ser clasificado; en ese caso se trata como `"unknown"` y se bloquea.
 
 ```bash
 pip install langdetect
