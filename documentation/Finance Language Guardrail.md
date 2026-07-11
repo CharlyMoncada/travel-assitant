@@ -121,3 +121,95 @@ Lo siento, el asistente de finanzas solo admite inglés y español.
 ```
 
 El rechazo se persiste en el historial de conversación (igual que cualquier otro mensaje del asistente) para que aparezca correctamente en el hilo del chat.
+
+---
+
+## Pruebas
+
+### Pruebas unitarias de detección de idioma (ejecutadas en CI)
+
+Se verificó el módulo `guardrails.py` de forma aislada sobre 9 casos representativos. Resultado: **9/9 PASS**.
+
+| # | Texto de entrada | Idioma detectado | Acción esperada | Resultado |
+|---|-----------------|-----------------|-----------------|-----------|
+| 1 | `Add an expense of 12 euros for lunch` | `en` | PERMITIDO | PASS |
+| 2 | `Anota un gasto de 25 euros en taxi al aeropuerto` | `es` | PERMITIDO | PASS |
+| 3 | `Muéstrame el resumen de mi presupuesto` | `es` | PERMITIDO | PASS |
+| 4 | `Show me my budget summary` | `en` | PERMITIDO | PASS |
+| 5 | `Ajoute une dépense de 30 euros pour le taxi` | `fr` | BLOQUEADO | PASS |
+| 6 | `Füge eine Ausgabe von 20 Euro hinzu` | `de` | BLOQUEADO | PASS |
+| 7 | `添加一笔50欧元的餐饮费用` | `zh-cn` | BLOQUEADO | PASS |
+| 8 | `Adiciona uma despesa de 15 euros para o almoço` | `pt` | BLOQUEADO | PASS |
+| 9 | `Aggiungi una spesa di 10 euro per pranzo` | `it` | BLOQUEADO | PASS |
+
+---
+
+### Pruebas E2E manuales (via API REST)
+
+Con los tres servicios en marcha (`./start.sh`), ejecutar los siguientes `curl` desde una terminal:
+
+#### Casos permitidos — deben llegar al Agente de Finanzas
+
+```bash
+# Español: registrar gasto
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Anota un gasto de 25 euros en taxi al aeropuerto", "session_id": "test_gr"}' | python3 -m json.tool
+
+# Inglés: registrar gasto
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Add an expense of 12 euros for lunch", "session_id": "test_gr"}' | python3 -m json.tool
+
+# Español: ver resumen
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Muéstrame el resumen de mis gastos", "session_id": "test_gr"}' | python3 -m json.tool
+```
+
+**Respuesta esperada:** `"agent_used": "finance"`, con el desglose de gastos en Markdown.
+
+---
+
+#### Casos bloqueados — deben ser rechazados por el guardrail
+
+```bash
+# Francés
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Ajoute une dépense de 30 euros pour le taxi", "session_id": "test_gr"}' | python3 -m json.tool
+
+# Alemán
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Füge eine Ausgabe von 20 Euro für das Abendessen hinzu", "session_id": "test_gr"}' | python3 -m json.tool
+
+# Portugués
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Adiciona uma despesa de 15 euros para o almoço", "session_id": "test_gr"}' | python3 -m json.tool
+
+# Chino
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "添加一笔50欧元的餐饮费用", "session_id": "test_gr"}' | python3 -m json.tool
+
+# Italiano
+curl -s -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Aggiungi una spesa di 10 euro per pranzo", "session_id": "test_gr"}' | python3 -m json.tool
+```
+
+**Respuesta esperada:**
+```json
+{
+  "llm_used": false,
+  "agent_used": "finance_guardrail",
+  "message": "Sorry, the finance assistant only supports English and Spanish.\nLo siento, el asistente de finanzas solo admite inglés y español."
+}
+```
+
+**Log esperado en `logs/main.log`:**
+```
+INFO - Finance guardrail blocked message (detected language: 'fr')
+```
