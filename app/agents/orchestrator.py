@@ -22,6 +22,12 @@ from ..services.persistence.memory_persistence import (
     save_user_memory,
 )
 from .finance import create_finance_agent
+from .finance.guardrails import (
+    check_finance_language,
+    check_prompt_injection,
+    REJECTION_MESSAGE,
+    REJECTION_MESSAGE_INJECTION,
+)
 from .general import create_general_agent
 from .recommender import create_recommender_agent
 from .reminder import create_reminder_agent
@@ -603,6 +609,45 @@ class TravelAgentOrchestrator:
             )
 
 
+
+            if route == "finance":
+                # 1. Language guardrail
+                allowed, detected_lang = check_finance_language(message)
+                if not allowed:
+                    logger.info(
+                        "Finance guardrail blocked message (detected language: '%s')",
+                        detected_lang,
+                    )
+                    try:
+                        save_message(thread_id, "assistant", REJECTION_MESSAGE)
+                    except Exception as e:
+                        logger.warning("Could not persist guardrail rejection message: %s", e)
+                    return {
+                        "llm_used": False,
+                        "llm_tool": "finance_guardrail",
+                        "agent_used": "finance_guardrail",
+                        "tool_response": None,
+                        "message": REJECTION_MESSAGE,
+                    }
+
+                # 2. Prompt injection guardrail
+                is_safe, matched_pattern = check_prompt_injection(message)
+                if not is_safe:
+                    logger.warning(
+                        "Finance injection guardrail blocked message (pattern: '%s')",
+                        matched_pattern,
+                    )
+                    try:
+                        save_message(thread_id, "assistant", REJECTION_MESSAGE_INJECTION)
+                    except Exception as e:
+                        logger.warning("Could not persist injection rejection message: %s", e)
+                    return {
+                        "llm_used": False,
+                        "llm_tool": "finance_injection_guardrail",
+                        "agent_used": "finance_guardrail",
+                        "tool_response": None,
+                        "message": REJECTION_MESSAGE_INJECTION,
+                    }
 
             agent_response, output = await self._run_specialized_agent(
                 llm,
