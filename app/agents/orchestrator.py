@@ -23,6 +23,7 @@ from ..services.persistence.memory_persistence import (
 )
 from .finance import create_finance_agent
 from .general import create_general_agent
+from .recommender import create_recommender_agent
 from .reminder import create_reminder_agent
 from .supervisor import run_supervisor
 
@@ -466,6 +467,11 @@ class TravelAgentOrchestrator:
 
         elif route == "general":
             specialized_agent = create_general_agent(
+                llm,
+            )
+
+        elif route == "recommender":
+            specialized_agent = create_recommender_agent(
                 llm,
             )
 
