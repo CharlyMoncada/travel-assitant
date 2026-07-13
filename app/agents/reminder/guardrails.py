@@ -1,9 +1,9 @@
 """
-Guardrails del Agente de Finanzas.
+Guardrails del Agente de Recordatorios.
 
 Delega en el módulo común (guardrails_common) y re-exporta los símbolos
 que el orquestador necesita, añadiendo mensajes de rechazo específicos
-para el dominio de finanzas.
+para el dominio de recordatorios.
 """
 
 from ..guardrails_common import (
@@ -12,17 +12,17 @@ from ..guardrails_common import (
     REJECTION_MESSAGE_INJECTION,
 )
 
-# Mensajes de rechazo específicos del dominio de finanzas
+# Mensajes de rechazo específicos del dominio de recordatorios
 REJECTION_MESSAGE_LANGUAGE = (
-    "Sorry, the finance assistant only supports English and Spanish.\n"
-    "Lo siento, el asistente de finanzas solo admite inglés y español."
+    "Sorry, the reminder assistant only supports English and Spanish.\n"
+    "Lo siento, el asistente de recordatorios solo admite inglés y español."
 )
 
 # Alias para el orquestador
 REJECTION_MESSAGE = REJECTION_MESSAGE_LANGUAGE
 
 
-def check_finance_language(text: str) -> tuple[bool, str]:
+def check_reminder_language(text: str) -> tuple[bool, str]:
     """
     Comprueba si el texto está en inglés o español.
     Delega en guardrails_common.check_language.
@@ -34,7 +34,7 @@ def check_finance_language(text: str) -> tuple[bool, str]:
 
 
 __all__ = [
-    "check_finance_language",
+    "check_reminder_language",
     "check_prompt_injection",
     "REJECTION_MESSAGE",
     "REJECTION_MESSAGE_LANGUAGE",
