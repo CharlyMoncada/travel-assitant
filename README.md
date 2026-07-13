@@ -105,8 +105,7 @@ flowchart TB
    - `app/agents/reminder/`: Agente Especialista en Recordatorios (`agent.py`) y sus prompts (`prompts.py`).
    - `app/agents/general/`: Agente Especialista en Normas/Logística (`agent.py`) y sus prompts (`prompts.py`).
    - `app/agents/recommender/`: Agente Recomendador de Equipaje (`agent.py`, `tools.py`, `prompts.py`). Agente local puro sin MCP. Sus herramientas async consultan `wttr.in` para el tiempo actual y leen el CSV de objetos por defecto. Sigue el patrón ReAct: clasifica cada objeto según clima y duración del viaje.
-   - `app/agents/prompts.py`: Repositorio común de system prompts (fallback).
-   - `app/agents/tools.py`: Definiciones locales de herramientas del agente (`rules`, `logistics`).
+    - `app/agents/general/tools.py`: Definiciones locales de herramientas del agente (`rules`, `logistics`).
    - `app/data/objetos.csv`: Lista estándar de 30 objetos de viaje usada por el Recommender Agent para clasificación.
 3. **Capa de Infraestructura y Servidores MCP**:
    - `app/mcp/finance/server.py` (Puerto `8002`): Servidor MCP independiente sobre SSE exclusivo para la manipulación CRUD de transacciones financieras.
@@ -132,7 +131,7 @@ source .venv/bin/activate  # Linux/Mac
 pip install -r requirements.txt
 
 # Dependencia de detección de idioma (incluida en requirements.txt)
-pip install langdetect
+# pip install langdetect
 ```
 
 ### 3. Variables de entorno
@@ -263,21 +262,32 @@ El backend de presentación ofrece **7 endpoints de API unificados**:
 
 ---
 
-## Catálogo de Herramientas MCP Consolidadas (9 totales)
+## Catálogo de Herramientas Consolidadas (13 totales)
 
-### 1. Servidor de Finanzas (`finance_server` - Puerto `8002`)
+### 1. Servidor de Finanzas (`finance_server` - Puerto `8002` - MCP)
 
+- `budget`: Obtiene el estado del presupuesto y el desglose de gastos acumulados por categoría.
 - `record_expense`: Registra un nuevo gasto financiero. (Campos requeridos: `amount`, `description`, `category`).
 - `query_expenses`: Consulta los gastos registrados con opción de filtrado. (Campos opcionales: `category`).
 - `modify_expense`: Modifica propiedades de un gasto por ID. (Campos requeridos: `id`; opcionales: `amount`, `description`, `category`).
 - `delete_expense`: Borra físicamente un gasto por ID único. (Campos requeridos: `id`).
 
-### 2. Servidor de Recordatorios (`reminder_server` - Puerto `8003`)
+### 2. Servidor de Recordatorios (`reminder_server` - Puerto `8003` - MCP)
 
 - `record_reminder`: Crea un nuevo recordatorio. (Campos requeridos: `title`, `due_time`; `note` opcional).
 - `query_reminders`: Lista recordatorios almacenados y permite filtrado.
 - `modify_reminder`: Modifica un recordatorio existente por ID.
 - `delete_reminder`: Elimina un recordatorio por ID.
+
+### 3. Agente Recomendador de Equipaje (`recommender_agent` - Local)
+
+- `obtener_tiempo`: Consulta el clima actual para la ciudad de destino en tiempo real. (Campos requeridos: `ciudad`).
+- `obtener_objetos`: Obtiene la lista completa de objetos por defecto a clasificar desde el archivo CSV local.
+
+### 4. Agente General (`general_agent` - Local)
+
+- `rules`: Realiza búsquedas semánticas (RAG) en los documentos normativos oficiales de viaje. (Campos requeridos: `text`).
+- `logistics`: Buscador de vuelos, hoteles y transportes (placeholder para futura integración con API externa). (Campos requeridos: `text`).
 
 ---
 
