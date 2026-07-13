@@ -38,6 +38,7 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
   - **Finance Agent**: Aislado en `app/agents/finance/` con herramientas e instrucciones del dominio de gastos y finanzas.
   - **Reminder Agent**: Confinado en `app/agents/reminder/` exclusivamente a herramientas de creación, modificación y listado de recordatorios.
   - **General Agent**: Administra el flujo del RAG para normativas de viaje y soporte local desde `app/agents/general/`.
+  - **Recommender Agent**: Sugiere equipaje y clasifica objetos de viaje según el clima del destino (sin MCP, consume `wttr.in`) desde `app/agents/recommender/`.
 - **Enrutamiento Cognitivo Unificado (Supervisor Skill)**:
   - *Capa 1: Bilingual Keywords*: Identificación semántica inteligente de intenciones ante palabras clave bilingües de finanzas, recordatorios y normativas directamente en el prompt del sistema.
   - *Capa 2: Sticky Routing & Context Inheritance*: Herencia contextual automática del último dominio activo en el historial conversacional ante consultas breves o de continuación del usuario (p. ej., "borrar", "¿cuánto gasté?").
@@ -48,7 +49,7 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
 
 #### 5. Capa de Servicios de Dominio (Clean Architecture)
 - La lógica de negocio principal está centralizada en los módulos de persistencia bajo `app/services/persistence/`.
-- Las herramientas locales del agente (`rules` y `logistics`) se encuentran en `app/agents/tools.py`.
+- Las herramientas locales del agente (`rules`, `logistics`, `obtener_tiempo` y `obtener_objetos`) se encuentran en sus respectivos subdirectorios de agentes (p. ej., [app/agents/general/tools.py](file:///Users/carlosmoncada/Documents/code/master/tfm/travel-assitant/app/agents/general/tools.py) y [app/agents/recommender/tools.py](file:///Users/carlosmoncada/Documents/code/master/tfm/travel-assitant/app/agents/recommender/tools.py)).
 - No existe actualmente un archivo de servicios de dominio global como `TravelServices`; la arquitectura funciona con un router agnóstico que consume servicios MCP remotos.
 
 #### 6. Persistencia de Datos
@@ -87,6 +88,7 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
   - `app/agents/finance/`: Sub-agente financiero con su constructor `agent.py` y prompts dedicados.
   - `app/agents/reminder/`: Sub-agente de recordatorios con su constructor `agent.py` y prompts dedicados.
   - `app/agents/general/`: Sub-agente general con su constructor `agent.py` y prompts dedicados.
+  - `app/agents/recommender/`: Sub-agente recomendador de equipaje con su constructor `agent.py`, prompts dedicados y herramientas locales.
   - **Limpieza de Fallback**: Eliminación completa de `app/agents/prompts.py` (antiguo prompt general de fallback), delegando toda petición de ruta no reconocida directamente al agente `general` de forma robusta.
 
 #### 3. Estabilidad y Gestión de Memoria Stateless
@@ -108,7 +110,7 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
 |---------|-------|
 | Endpoints REST de Presentación (Port 8000) | 7 |
 | Servidores MCP Independientes | 2 (Puertos 8002 y 8003) |
-| Herramientas MCP Totales | 9 remotas + 2 locales |
+| Herramientas MCP Totales | 9 remotas + 4 locales |
 | Servicios de Dominio | 4 (+ fachada) |
 | Validación de Parámetros | Pydantic V2 Dinámico |
 | Cobertura RAG | Documentos TXT y PDF unificados |
@@ -129,7 +131,6 @@ travel-assistant/
 │   ├── agents/                         # Módulo de agentes y orquestación
 │   │   ├── __init__.py
 │   │   ├── orchestrator.py             # Cliente Multiserver asíncrono con Pydantic y persistencia
-│   │   ├── tools.py                    # Herramientas locales del agente (rules, logistics)
 │   │   ├── supervisor/                 # Agente Supervisor y Enrutador Cognitivo
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica del Supervisor (Código de Enrutamiento)
@@ -138,16 +139,23 @@ travel-assistant/
 │   │   ├── finance/                    # Agente Especialista en Finanzas
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica de construcción del sub-agente
-│   │   │   └── prompts.py              # FINANCE_AGENT_SYSTEM_PROMPT
+│   │   │   ├── prompts.py              # FINANCE_AGENT_SYSTEM_PROMPT
+│   │   │   └── guardrails.py           # Guardrails de idioma e inyección
 │   │   ├── reminder/                   # Agente Especialista en Recordatorios
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica de construcción del sub-agente
 │   │   │   ├── prompts.py              # REMINDER_AGENT_SYSTEM_PROMPT
 │   │   │   └── reminder_skill.md       # Especificación del Skill de Recordatorios
-│   │   └── general/                    # Agente Especialista en RAG y Logística
+│   │   ├── general/                    # Agente Especialista en RAG y Logística
+│   │   │   ├── __init__.py
+│   │   │   ├── agent.py                # Lógica de construcción del sub-agente
+│   │   │   ├── prompts.py              # GENERAL_AGENT_SYSTEM_PROMPT
+│   │   │   └── tools.py                # Herramientas locales del agente general (rules, logistics)
+│   │   └── recommender/                # Agente Recomendador de Equipaje (Agente local)
 │   │       ├── __init__.py
 │   │       ├── agent.py                # Lógica de construcción del sub-agente
-│   │       └── prompts.py              # GENERAL_AGENT_SYSTEM_PROMPT
+│   │       ├── prompts.py              # RECOMMENDER_SYSTEM_PROMPT
+│   │       └── tools.py                # Herramientas locales de equipaje (obtener_tiempo, obtener_objetos)
 │   ├── connectors/
 │   │   └── telegram_bot.py             # Integración opcional con Telegram
 │   ├── frontend/                       # Archivos de interfaz web (consola y gráficos)
@@ -203,7 +211,7 @@ travel-assistant/
 | `modify_reminder` | `reminder_server` | 8003 | `id` (int), opcionales `title`, `due_time`, `note` |
 | `delete_reminder` | `reminder_server` | 8003 | `id` (int) |
 
-Adicionalmente, el agente expone localmente las herramientas `rules` y `logistics`.
+Adicionalmente, el agente expone localmente las herramientas `rules`, `logistics`, `obtener_tiempo` y `obtener_objetos`.
 
 ---
 

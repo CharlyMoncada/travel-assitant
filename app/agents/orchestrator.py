@@ -29,6 +29,7 @@ from .finance.guardrails import (
     REJECTION_MESSAGE_INJECTION as FINANCE_REJECTION_INJECTION,
 )
 from .general import create_general_agent
+from .recommender import create_recommender_agent
 from .reminder import create_reminder_agent
 from .reminder.guardrails import (
     check_reminder_language,
@@ -477,6 +478,11 @@ class TravelAgentOrchestrator:
 
         elif route == "general":
             specialized_agent = create_general_agent(
+                llm,
+            )
+
+        elif route == "recommender":
+            specialized_agent = create_recommender_agent(
                 llm,
             )
 

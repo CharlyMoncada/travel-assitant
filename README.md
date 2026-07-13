@@ -12,10 +12,11 @@ Asistente inteligente de viaje basado en IA Generativa que integra una arquitect
   - **Finance Agent** (`app/agents/finance/`): Focalizado en la gestión financiera con acceso exclusivo a herramientas del servidor de gastos.
   - **Reminder Agent** (`app/agents/reminder/`): Dedicado a la gestión del itinerario y recordatorios.
   - **General Agent** (`app/agents/general/`): Encargado de normativas de viajes (RAG) y logística local.
+  - **Recommender Agent** (`app/agents/recommender/`): Recomendador inteligente de equipaje de viaje basado en ReAct prompting. Dado un destino y número de días, consulta el clima actual en tiempo real y clasifica una lista estándar de objetos en tres categorías: obligatorios, recomendados y descartados. Funciona como agente local puro (sin MCP), con sus propias herramientas async (`obtener_tiempo`, `obtener_objetos`).
 - **⚡ Enrutamiento Cognitivo Unificado**:
   - **Habilidad de Enrutamiento del Supervisor (Supervisor Skill)**: Inferencia inteligente conversacional que opera a nivel de directrices semánticas del Prompt de Sistema del Supervisor LLM, agrupado en dos capas cognitivas:
     - *Capa 1: Bilingual Keywords*: Identificación instantánea de intenciones en español e inglés utilizando un catálogo de palabras clave bilingües.
-    - *Capa 2: Sticky Routing & Context Inheritance*: Inspección del historial conversacional limpio para heredar automáticamente el último dominio activo (gastos, recordatorios, general) ante consultas conversacionales de seguimiento del usuario (p. ej., "¿cuánto gasté en total?", "borrar", "ver lista") sin requerir aclaraciones adicionales.
+    - *Capa 2: Sticky Routing & Context Inheritance*: Inspección del historial conversacional limpio para heredar automáticamente el último dominio activo (gastos, recordatorios, general, equipaje) ante consultas conversacionales de seguimiento del usuario (p. ej., "¿cuánto gasté en total?", "borrar", "ver lista", "¿y si llueve?") sin requerir aclaraciones adicionales.
   - **Interacción Directa / Smalltalk**: Capacidad del Supervisor LLM para abordar saludos, despedidas o clarificar dudas ambiguas directamente sin enrutamiento agéntico cuando no hay contexto previo.
 - **🔌 Arquitectura MCP Multiserver**:
   - **Finance MCP Server** (Puerto `8002`): Servidor independiente sobre SSE exclusivo para transacciones financieras CRUD de gastos.
@@ -51,6 +52,7 @@ flowchart TB
             FA["💰 Finance Agent<br/>(Prompt financiero + Tools de gastos)"]
             RA["⏰ Reminder Agent<br/>(Prompt recordatorios + Tools CRUD)"]
             GA["📚 General Agent<br/>(Prompt general + RAG & Local tools)"]
+            REC["🎒 Recommender Agent<br/>(Prompt equipaje + wttr.in + CSV)"]
         end
     end
 
@@ -79,6 +81,8 @@ flowchart TB
     FA -->|Llamada SSE| FM
     RA -->|Llamada SSE| RM
     GA -->|Tools Locales / RAG| VectorDB
+    REC -->|"obtener_tiempo (wttr.in)"| Internet(["🌐 wttr.in API"])
+    REC -->|"obtener_objetos (CSV)"| CSV(["📄 app/data/objetos.csv"])
     
     %% Acceso a Datos
     FM --> DB
@@ -100,8 +104,9 @@ flowchart TB
    - `app/agents/finance/`: Agente Especialista en Finanzas (`agent.py`) y sus prompts (`prompts.py`).
    - `app/agents/reminder/`: Agente Especialista en Recordatorios (`agent.py`) y sus prompts (`prompts.py`).
    - `app/agents/general/`: Agente Especialista en Normas/Logística (`agent.py`) y sus prompts (`prompts.py`).
-   - `app/agents/prompts.py`: Repositorio común de system prompts (fallback).
-   - `app/agents/tools.py`: Definiciones locales de herramientas del agente (`rules`, `logistics`).
+   - `app/agents/recommender/`: Agente Recomendador de Equipaje (`agent.py`, `tools.py`, `prompts.py`). Agente local puro sin MCP. Sus herramientas async consultan `wttr.in` para el tiempo actual y leen el CSV de objetos por defecto. Sigue el patrón ReAct: clasifica cada objeto según clima y duración del viaje.
+    - `app/agents/general/tools.py`: Definiciones locales de herramientas del agente (`rules`, `logistics`).
+   - `app/data/objetos.csv`: Lista estándar de 30 objetos de viaje usada por el Recommender Agent para clasificación.
 3. **Capa de Infraestructura y Servidores MCP**:
    - `app/mcp/finance/server.py` (Puerto `8002`): Servidor MCP independiente sobre SSE exclusivo para la manipulación CRUD de transacciones financieras.
    - `app/mcp/reminder/server.py` (Puerto `8003`): Servidor MCP independiente sobre SSE exclusivo para la gestión CRUD de recordatorios e itinerario.
@@ -124,6 +129,9 @@ source .venv/bin/activate  # Linux/Mac
 
 # Instalar dependencias requeridas
 pip install -r requirements.txt
+
+# Dependencia de detección de idioma (incluida en requirements.txt)
+# pip install langdetect
 ```
 
 ### 3. Variables de entorno
@@ -254,21 +262,32 @@ El backend de presentación ofrece **7 endpoints de API unificados**:
 
 ---
 
-## Catálogo de Herramientas MCP Consolidadas (9 totales)
+## Catálogo de Herramientas Consolidadas (13 totales)
 
-### 1. Servidor de Finanzas (`finance_server` - Puerto `8002`)
+### 1. Servidor de Finanzas (`finance_server` - Puerto `8002` - MCP)
 
+- `budget`: Obtiene el estado del presupuesto y el desglose de gastos acumulados por categoría.
 - `record_expense`: Registra un nuevo gasto financiero. (Campos requeridos: `amount`, `description`, `category`).
 - `query_expenses`: Consulta los gastos registrados con opción de filtrado. (Campos opcionales: `category`).
 - `modify_expense`: Modifica propiedades de un gasto por ID. (Campos requeridos: `id`; opcionales: `amount`, `description`, `category`).
 - `delete_expense`: Borra físicamente un gasto por ID único. (Campos requeridos: `id`).
 
-### 2. Servidor de Recordatorios (`reminder_server` - Puerto `8003`)
+### 2. Servidor de Recordatorios (`reminder_server` - Puerto `8003` - MCP)
 
 - `record_reminder`: Crea un nuevo recordatorio. (Campos requeridos: `title`, `due_time`; `note` opcional).
 - `query_reminders`: Lista recordatorios almacenados y permite filtrado.
 - `modify_reminder`: Modifica un recordatorio existente por ID.
 - `delete_reminder`: Elimina un recordatorio por ID.
+
+### 3. Agente Recomendador de Equipaje (`recommender_agent` - Local)
+
+- `obtener_tiempo`: Consulta el clima actual para la ciudad de destino en tiempo real. (Campos requeridos: `ciudad`).
+- `obtener_objetos`: Obtiene la lista completa de objetos por defecto a clasificar desde el archivo CSV local.
+
+### 4. Agente General (`general_agent` - Local)
+
+- `rules`: Realiza búsquedas semánticas (RAG) en los documentos normativos oficiales de viaje. (Campos requeridos: `text`).
+- `logistics`: Buscador de vuelos, hoteles y transportes (placeholder para futura integración con API externa). (Campos requeridos: `text`).
 
 ---
 
@@ -320,6 +339,29 @@ curl -X POST http://localhost:8000/message \
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d '{"text": "¿Cuáles son los requisitos de visa para viajar?", "session_id": "test_e2e"}'
+```
+
+### 4. Recomendador de Equipaje
+
+- **Clasificar objetos para un destino** (Enruta a `recommender`; llama a `obtener_tiempo` y `obtener_objetos`):
+```bash
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Ayúdame a hacer la maleta para un viaje de 5 días a Tokio", "session_id": "test_e2e"}'
+```
+
+- **En inglés** (el agente responde en el idioma detectado):
+```bash
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "What should I pack for 3 days in London?", "session_id": "test_e2e"}'
+```
+
+- **Seguimiento sticky** (hereda el contexto `recommender` automáticamente):
+```bash
+curl -X POST http://localhost:8000/message \
+  -H "Content-Type: application/json" \
+  -d '{"text": "¿Qué llevaría si además fuera a la playa?", "session_id": "test_e2e"}'
 ```
 
 ---

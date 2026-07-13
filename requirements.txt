@@ -15,5 +15,6 @@ langgraph-checkpoint
 mcp
 httpx
 langsmith
+langdetect
 langchain
 langchain-openai

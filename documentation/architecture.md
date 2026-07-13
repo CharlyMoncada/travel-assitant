@@ -30,23 +30,25 @@ flowchart TB
             end
             
             subgraph Agents ["Sub-Agentes Especialistas Modulares"]
-                FA["💰 Finance Agent<br/>(finance/agent.py)"]
-                RA["⏰ Reminder Agent<br/>(reminder/agent.py)"]
-                GA["📚 General Agent<br/>(general/agent.py)"]
-            end
+            FA["💰 Finance Agent<br/>(finance/agent.py)"]
+            RA["⏰ Reminder Agent<br/>(reminder/agent.py)"]
+            GA["📚 General Agent<br/>(general/agent.py)"]
+            REC["🎒 Recommender Agent<br/>(recommender/agent.py)"]
         end
     end
+end
 
-    subgraph Servers ["Servidores de Herramientas MCP (Transporte SSE)"]
-        FM["🔌 Finance MCP Server<br/>Port 8002"]
-        RM["🔌 Reminder MCP Server<br/>Port 8003"]
-    end
+subgraph Servers ["Servidores de Herramientas MCP (Transporte SSE)"]
+    FM["🔌 Finance MCP Server<br/>Port 8002"]
+    RM["🔌 Reminder MCP Server<br/>Port 8003"]
+end
 
-    subgraph Services ["Capa de Servicios y Negocio"]
-        RULES["Tools locales<br/>app/agents/tools.py"]
-        PERSIST["Persistencia de dominio<br/>app/services/persistence/"]
-        RAG["app/services/rag.py<br/>ChromaDB + SentenceTransformers"]
-    end
+subgraph Services ["Capa de Servicios y Negocio"]
+    RULES["Tools locales RAG<br/>app/agents/general/tools.py"]
+    PERSIST["Persistencia de dominio<br/>app/services/persistence/"]
+    RAG["app/services/rag.py<br/>ChromaDB + SentenceTransformers"]
+    REC_TOOLS["Tools locales equipaje<br/>app/agents/recommender/tools.py"]
+end
 
     subgraph Storage ["Almacenamiento y Persistencia"]
         DB[("🗄️ SQLite DB<br/>travel_assistant.db")]
@@ -70,6 +72,7 @@ flowchart TB
     RA -->|Llamada SSE| RM
     GA -->|Tools locales| RULES
     GA -->|Búsqueda Semántica| RAG
+    REC -->|Tools locales| REC_TOOLS
 
     %% Negocio a Datos
     FM --> PERSIST
@@ -140,6 +143,7 @@ Cada sub-agente corre sobre un grafo simplificado de LangGraph independiente, ai
 - **Finance Agent** (`app/agents/finance/`): Inicializa un agente focalizado. Filtra estrictamente el catálogo unificado de herramientas para exponer exclusivamente las de gastos (`expense`, `budget`) y carga el prompt de comportamiento financiero (`prompts.py`).
 - **Reminder Agent** (`app/agents/reminder/`): Inicializa el agente de itinerario, exponiendo única y exclusivamente las herramientas CRUD de recordatorios.
 - **General Agent** (`app/agents/general/`): Emplea las herramientas locales de consulta documental (RAG) y logística local.
+- **Recommender Agent** (`app/agents/recommender/`): Sugiere equipaje y clasifica objetos de viaje según el clima del destino (haciendo uso de wttr.in y el listado de objetos CSV).
 
 ---
 
@@ -181,9 +185,11 @@ Organizados en el directorio modularizado **`app/mcp/`**:
 | `query_reminders` | `reminder_server` | 8003 | (ninguno) | Lista todos los recordatorios registrados |
 | `modify_reminder` | `reminder_server` | 8003 | `id` (int), opcionales `title`, `due_time`, `note` | Edita propiedades de un recordatorio existente |
 | `delete_reminder` | `reminder_server` | 8003 | `id` (int) | Borra permanentemente un recordatorio |
+| `obtener_tiempo` | `recommender_agent` | *(local)* | `ciudad` (str) | Consulta el clima actual para una ciudad usando wttr.in |
+| `obtener_objetos` | `recommender_agent` | *(local)* | Ninguno | Devuelve la lista estándar de objetos para clasificar |
 
 
-Además, el agente expone herramientas locales no MCP: `rules` y `logistics`.
+Además, el agente expone herramientas locales no MCP: `rules`, `logistics`, `obtener_tiempo` y `obtener_objetos`.
 
 ---
 
