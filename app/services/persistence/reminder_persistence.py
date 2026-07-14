@@ -1,4 +1,5 @@
 import datetime
+from datetime import timezone
 
 from sqlalchemy import Column, DateTime, Integer, String, Text
 
@@ -12,7 +13,7 @@ class Reminder(Base):
     title = Column(String(255), nullable=False)
     note = Column(Text, nullable=True)
     due_time = Column(String(100), nullable=False)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc))
 
 
 def save_reminder(title: str, due_time: str, note: str):

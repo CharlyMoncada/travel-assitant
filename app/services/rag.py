@@ -450,11 +450,24 @@ def query_normative_documents(
         max_distance=MAX_DISTANCE,
     )
 
-    if sources and sources[0].get("distance") is not None and sources[0]["distance"] > 0.45:
-        return (
-            "No encontré documentación suficientemente específica para responder con seguridad.",
-            sources,
-        )
+    if not sources or (sources[0].get("distance") is not None and sources[0]["distance"] > 0.45):
+        try:
+            from langdetect import detect
+            lang = detect(query)
+        except Exception:
+            lang = "es"
+
+        if lang == "es":
+            msg = (
+                "Lo siento, este asistente solo dispone de normativas, visados y requisitos de viaje "
+                "para destinos dentro de Europa. No se encontró información para tu consulta."
+            )
+        else:
+            msg = (
+                "Sorry, this assistant only has travel regulations, visas, and entry requirements "
+                "for destinations within Europe. I could not find information for your query."
+            )
+        return msg, sources
 
     answer = compose_rag_answer(
         normalized_query,

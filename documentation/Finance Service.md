@@ -47,8 +47,8 @@ flowchart TD
 | Archivo | Propósito |
 |---------|-----------|
 | `agent.py` | Función fábrica `create_finance_agent(llm, tools)` que compila el agente LangGraph |
-| `prompts.py` | `get_finance_system_prompt()` — construye el prompt de sistema específico de finanzas |
-| `guardrails.py` | `check_finance_language(text)` — bloquea la entrada que no sea EN/ES antes de invocar el agente |
+| `prompts.py` | `get_finance_system_prompt()` — construye el prompt de sistema dinámico de finanzas con contexto de fechas relativas |
+| `finance_skill.md` | Especificación técnica interna del skill del agente de finanzas |
 
 ### Comportamiento del agente
 
@@ -58,14 +58,29 @@ flowchart TD
 
 ### Directrices del prompt de sistema (`prompts.py`)
 
+El prompt se genera dinámicamente en cada llamada mediante `get_finance_system_prompt()`, que inyecta el contexto de fecha/hora actual desde `app/utils/date_resolution.py`.
+
 1. **Selección de herramienta**: mapea directamente la intención del usuario a la herramienta MCP correcta (`budget`, `query_expenses`, `record_expense`, `modify_expense`, `delete_expense`).
-2. **Salida estructurada en Markdown**: cuando los datos de la herramienta están disponibles, el agente siempre renderiza un desglose completo — total, recuento, resumen por categoría y lista de ítems con fecha.
+2. **Salida contextual en Markdown**: el agente adapta su respuesta según la acción solicitada:
+   - Si el usuario **pide ver, listar o revisar** gastos: muestra el desglose completo (total, recuento, resumen por categoría y lista con ID/descripción/cantidad/categoría/fecha).
+   - Si el usuario **registra** un gasto: muestra **solo** la confirmación del gasto recién creado (ID, descripción, cantidad, categoría, fecha).
+   - Si el usuario **modifica** un gasto: muestra solo los detalles del gasto actualizado.
+   - Si el usuario **elimina** un gasto: muestra solo una confirmación con el ID eliminado.
+   - **NUNCA** lista todos los gastos automáticamente tras una operación de creación/modificación/eliminación.
 3. **Multilingüe**: responde siempre en el idioma en que el usuario escribe (inglés o español).
-4. **Resolución de fechas**: resuelve expresiones de fecha relativas (p. ej., "ayer", "la semana pasada") usando el contexto de fecha actual inyectado y filtra los resultados en el cliente, ya que las herramientas no aceptan parámetros de fecha.
+4. **Resolución de fechas relativas**: resuelve expresiones como "ayer", "la semana pasada", "last month" usando el contexto de fecha actual inyectado. Como `query_expenses` no acepta filtros de fecha, recupera todos los gastos y filtra por fecha en la respuesta.
+5. **Double Confirmation para acciones destructivas**: antes de llamar a `modify_expense` o `delete_expense`, el agente verifica en el historial si el usuario ha confirmado explícitamente la acción. Si no hay confirmación previa, solicita confirmación y advierte que la acción es irreversible.
+6. **Categorías estándar de gastos**: al registrar o modificar gastos, el agente clasifica automáticamente en las categorías canónicas:
+   - `Comida / Food` — comidas, restaurantes, cafeterías, supermercados
+   - `Transporte / Transport` — taxis, trenes, vuelos, metro, autobús, alquiler de vehículos
+   - `Alojamiento / Accommodation` — hoteles, hostales, Airbnb
+   - `Entretenimiento / Entertainment` — entradas, museos, tours, eventos
+   - `Otros / Others` — compras, regalos, emergencias, costes no clasificados
+7. **Aislamiento Multi-intent (NON-NEGOTIABLE)**: cuando el mensaje del usuario contiene solicitudes para otros agentes (recordatorios, packing, recomendaciones), el agente las ignora **silenciosamente**. No menciona, redirige ni comenta esas otras partes. Responde como si el usuario solo hubiera preguntado sobre finanzas.
 
-### Guardrail de idioma
+### Guardrail de seguridad
 
-Antes de invocar el Agente de Finanzas, el orquestador llama a `check_finance_language(message)`. Consulta [Guardrail de Idioma para el Servicio de Finanzas](Finance%20Language%20Guardrail.md) para todos los detalles.
+Los guardrails de idioma e inyección están centralizados en `app/agents/orchestrator/guardrails_input.py` (y los de salida en `guardrails_output.py`) y son ejecutados globalmente por el orquestador. Consulta [Guardrails.md](Guardrails.md) para los detalles completos.
 
 ---
 

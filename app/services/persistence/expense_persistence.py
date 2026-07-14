@@ -1,4 +1,5 @@
 import datetime
+from datetime import timezone
 
 from sqlalchemy import Column, DateTime, Float, Integer, String
 
@@ -12,7 +13,7 @@ class Expense(Base):
     description = Column(String(255), nullable=False)
     amount = Column(Float, nullable=False)
     category = Column(String(100), nullable=True)
-    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=lambda: datetime.datetime.now(timezone.utc))
 
 
 def save_expense(description: str, amount: float, category: str):

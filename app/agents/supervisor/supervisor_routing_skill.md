@@ -19,31 +19,31 @@ flowchart TD
         C --> F["Layer 3: Ambiguity & Smalltalk Handler"]
     end
     
-    D -->|Match Domain| G["Output Pydantic JSON: {route: '...', response: null}"]
+    D -->|Match Domain| G["Output Pydantic JSON: {routes: ['...'], response: null}"]
     E -->|Inherit Active Context| G
-    F -->|Chat / Clarification| H["Output Pydantic JSON: {route: null, response: '...' }"]
+    F -->|Chat / Clarification| H["Output Pydantic JSON: {routes: [], response: '...' }"]
     
     G --> I[TravelAgentOrchestrator<br/>3. Execute Specialist Sub-Agent]
     H --> J[Return Response Directly to User]
 ```
 
-*   **Layer 1: Bilingual Keyword Analyzer**: Semantic matching of intent using a rich bilinguality matrix (Spanish/English) defined in the system prompt. Resolves direct commands (e.g. *"gasto"*, *"recordatorios"*, *"visa"*) seamlessly.
-*   **Layer 2: Sticky Routing & Context Inheritance**: Evaluates conversational follow-ups, continuations, or vague requests lacking explicit domain words (e.g. *"delete"*, *"show"*). Inspects the clean SQL history provided by the Router to inherit the last active domain without prompting the user.
-*   **Layer 3: Ambiguity & Smalltalk Handler**: Addresses greetings, Smalltalk, out-of-scope requests, or completely ambiguous queries directly when there is no historical domain to inherit.
+*   **Layer 1: Bilingual Keyword Analyzer**: Matches intent using a bilingual keywords list. Resolves direct commands (e.g. *"gasto"*, *"recordatorios"*, *"visa"*) seamlessly.
+*   **Layer 2: Sticky Routing & Context Inheritance**: Evaluates conversational follow-ups, continuations, or vague requests lacking explicit domain words (e.g. *"delete"*, *"show"*). Inspects the clean SQL history provided by the Router to inherit the last active domain.
+*   **Layer 3: Ambiguity & Smalltalk Handler**: Addresses greetings, Smalltalk, out-of-scope requests, or completely ambiguous queries directly.
 
-This structured JSON model guarantees routing schema compliance, eliminating edge-case bugs caused by regex mismatches, and allows the LLM to dynamically adapt to bilingual context changes and subtle user hints.
+This structured JSON model guarantees routing schema compliance, eliminating edge-case bugs, and allows the LLM to dynamically adapt to bilingual context changes.
 
 ---
 
 ## 2. Layer 1: Bilingual Keyword Matrices
 
-Keywords are evaluated using regex boundaries to prevent substrings from causing false-positives (e.g., matching "particular" as "art").
+Keywords are evaluated using regex boundaries to prevent substrings from causing false-positives.
 
 | Domain | Spanish Keywords | English Keywords | Target Schema |
 | :--- | :--- | :--- | :--- |
-| **`finance`** | `gasto`, `gastos`, `presupuesto`, `presupuestos`, `dinero`, `finanzas`, `costo`, `costos`, `pagar`, `pagué` | `expense`, `expenses`, `budget`, `budgets`, `money`, `finance`, `finances`, `cost`, `costs`, `pay`, `paid` | `{ "route": "finance", "response": null }` |
-| **`reminder`** | `recordatorio`, `recordatorios`, `alarma`, `alarmas`, `agenda`, `recordar`, `recuerda`, `aviso`, `avisos` | `reminder`, `reminders`, `alarm`, `alarms`, `schedule`, `remember`, `alert`, `alerts`, `warn`, `warning` | `{ "route": "reminder", "response": null }` |
-| **`general`** | `visa`, `visas`, `vacuna`, `vacunas`, `normativa`, `normativas`, `requisito`, `requisitos`, `documentacion`, `documentación`, `itinerario`, `transporte`, `vuelo`, `vuelos`, `hotel`, `hoteles` | `vaccine`, `vaccines`, `regulation`, `regulations`, `requirement`, `requirements`, `documentation`, `itinerary`, `transport`, `flight`, `flights`, `hotels` | `{ "route": "general", "response": null }` |
+| **`finance`** | `gasto`, `gastos`, `presupuesto`, `presupuestos`, `dinero`, `finanzas`, `costo`, `costos`, `pagar`, `pagué` | `expense`, `expenses`, `budget`, `budgets`, `money`, `finance`, `finances`, `cost`, `costs`, `pay`, `paid` | `{ "routes": ["finance"], "response": null }` |
+| **`reminder`** | `recordatorio`, `recordatorios`, `alarma`, `alarmas`, `agenda`, `recordar`, `recuerda`, `aviso`, `avisos` | `reminder`, `reminders`, `alarm`, `alarms`, `schedule`, `remember`, `alert`, `alerts`, `warn`, `warning` | `{ "routes": ["reminder"], "response": null }` |
+| **`general`** | `visa`, `visas`, `vacuna`, `vacunas`, `normativa`, `normativas`, `requisito`, `requisitos`, `documentacion`, `documentación`, `itinerario`, `transporte`, `vuelo`, `vuelos`, `hotel`, `hoteles` | `vaccine`, `vaccines`, `regulation`, `regulations`, `requirement`, `requirements`, `documentation`, `itinerary`, `transport`, `flight`, `flights`, `hotels` | `{ "routes": ["general"], "response": null }` |
 
 ---
 
@@ -54,14 +54,14 @@ When the incoming query is concise, represents a continuation, or lacks direct b
 ### 3.1 History Pre-Filtering (`_get_persistent_history`)
 To avoid cognitive fatigue and guide the LLM accurately, the `TravelAgentOrchestrator` queries the persistent SQLite database for the conversation history:
 *   Only high-level chat messages (`HumanMessage` and final `AIMessage` responses) are stored.
-*   The timeline is completely clean of intermediate tool execution logs (`ToolMessage` or raw `tool_calls` arguments), routes, or internal tag logs.
+*   The timeline is completely clean of intermediate tool execution logs, routes, or internal tag logs.
 *   This clean, high-level timeline allows the Supervisor to evaluate turns without parsing noisy details.
 
 ### 3.2 LLM Reasoning Rules for Context Inheritance
 Using this filtered timeline, the Supervisor LLM determines context inheritance:
 1.  **Identify the Last Active Domain**: Scans the most recent conversation turns. If the last assistant reply discussed expenses/budgets or was generated by the finance specialist, the active domain is declared `finance`. If it discussed itinerary/calendar/reminders, the active domain is `reminder`. If it discussed visas/vaccines/rules, the active domain is `general`.
-2.  **Inherit Route Immediately**: If an active domain is found, the LLM inherits the route immediately by setting the `route` field (e.g., `"finance"`) without prompting the user for redundant confirmations (e.g. if the user says *"show"* or *"¿cuánto fue?"*).
-3.  **Detect Subject Transitions**: If the user explicitly changes the topic (e.g. *"Now show me visas"* after a finance thread), the LLM detects the transition, overrides the sticky context, and outputs the new route (e.g., `"general"`).
+2.  **Inherit Route Immediately**: If an active domain is found, the LLM inherits the route immediately by setting the `routes` field (e.g., `["finance"]`) without prompting the user for redundant confirmations (e.g. if the user says *"show"* or *"¿cuánto fue?"*).
+3.  **Detect Subject Transitions**: If the user explicitly changes the topic (e.g. *"Now show me visas"* after a finance thread), the LLM detects the transition, overrides the sticky context, and outputs the new route (e.g., `["general"]`).
 
 ---
 
@@ -69,7 +69,7 @@ Using this filtered timeline, the Supervisor LLM determines context inheritance:
 
 When the fast-path matches and context inheritance do not apply, the Supervisor resolves the request:
 1.  **No Redundant Clarifications**: If a domain is clear, route immediately. Do not ask *"would you like to list or add?"*.
-2.  **Friendly Smalltalk**: Reply directly in the `response` field in a friendly, professional tone to greetings and small talk (e.g. *"hello"*, *"gracias"*), keeping `route` as `null`.
+2.  **Friendly Smalltalk**: Reply directly in the `response` field in a friendly, professional tone to greetings and small talk (e.g. *"hello"*, *"gracias"*), keeping `routes` as empty `[]`.
 3.  **Ambiguous Requests**: If a query is completely ambiguous and there is no previous history to inherit from, reply directly in the `response` field asking the user to clarify their intent (e.g., *"¿Deseas gestionar gastos o crear recordatorios?"*).
 4.  **Permitted Scope Exceptions**: Daily personal productivity reminders (e.g., *"comprar leche"*, *"ir al gym"*) and personal daily expenses (e.g., *"café"*, *"comida"*) are permitted exceptions. These must be enrouted to `reminder` or `finance` respectively, overriding the general travel-only scope filter.
 

@@ -1,7 +1,6 @@
-import json
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -39,47 +38,6 @@ def _get_openai_client():
         return None
     return openai.OpenAI(api_key=api_key)
 
-
-def _to_json(text: str) -> Optional[Dict[str, Any]]:
-    payload = text.strip()
-    if payload.startswith("```json"):
-        payload = payload.split("```json", 1)[1].rsplit("```", 1)[0].strip()
-
-    try:
-        return json.loads(payload)
-    except json.JSONDecodeError:
-        start = payload.find("{")
-        end = payload.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                return json.loads(payload[start:end + 1])
-            except json.JSONDecodeError:
-                pass
-    return None
-
-
-def _extract_text_from_response(response: Any, context: str = "response") -> str:
-    text = getattr(response, "output_text", None)
-    logger.debug("LLM %s output_text=%r", context, text)
-    if text:
-        return text
-
-    collected = []
-    for item in getattr(response, "output", []) or []:
-        for part in getattr(item, "content", []) or []:
-            if hasattr(part, "text") and part.text:
-                collected.append(part.text)
-
-    for choice in getattr(response, "choices", []) or []:
-        message = getattr(choice, "message", None)
-        if message is not None and hasattr(message, "content") and message.content:
-            collected.append(message.content)
-        elif hasattr(choice, "text") and choice.text:
-            collected.append(choice.text)
-
-    text = "".join(collected)
-    logger.debug("LLM %s extracted text=%r", context, text)
-    return text
 
 
 def compose_rag_answer(query: str, documents: list, metadatas: list) -> str:
@@ -122,7 +80,6 @@ def compose_rag_answer(query: str, documents: list, metadatas: list) -> str:
             model=get_openai_model(),
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=500,
-            temperature=0.0,
         )
         answer = response.choices[0].message.content.strip()
         sources = ", ".join(m.get("source", "unknown") for m in metadatas if m)

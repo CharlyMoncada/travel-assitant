@@ -12,19 +12,26 @@ Asistente inteligente de viaje basado en IA Generativa que integra una arquitect
   - **Finance Agent** (`app/agents/finance/`): Focalizado en la gestión financiera con acceso exclusivo a herramientas del servidor de gastos.
   - **Reminder Agent** (`app/agents/reminder/`): Dedicado a la gestión del itinerario y recordatorios.
   - **General Agent** (`app/agents/general/`): Encargado de normativas de viajes (RAG) y logística local.
-  - **Recommender Agent** (`app/agents/recommender/`): Recomendador inteligente de equipaje de viaje basado en ReAct prompting. Dado un destino y número de días, consulta el clima actual en tiempo real y clasifica una lista estándar de objetos en tres categorías: obligatorios, recomendados y descartados. Funciona como agente local puro (sin MCP), con sus propias herramientas async (`obtener_tiempo`, `obtener_objetos`).
+  - **Recommender Agent** (`app/agents/recommender/`): Recomendador inteligente de equipaje de viaje basado en ReAct prompting. Dado un destino y número de días, consulta el clima actual en tiempo real y clasifica una lista estándar de objetos en tres categorías: obligatorios, recomendados y descartados. Funciona como agente local puro (sin MCP), con sus propias herramientas async (`get_weather`, `get_packing_items`).
 - **⚡ Enrutamiento Cognitivo Unificado**:
-  - **Habilidad de Enrutamiento del Supervisor (Supervisor Skill)**: Inferencia inteligente conversacional que opera a nivel de directrices semánticas del Prompt de Sistema del Supervisor LLM, agrupado en dos capas cognitivas:
+  - **Habilidad de Enrutamiento del Supervisor (Supervisor Skill)**: Inferencia inteligente conversacional que opera a nivel de directrices semánticas del Prompt de Sistema del Supervisor LLM, agrupado en tres capas cognitivas:
     - *Capa 1: Bilingual Keywords*: Identificación instantánea de intenciones en español e inglés utilizando un catálogo de palabras clave bilingües.
-    - *Capa 2: Sticky Routing & Context Inheritance*: Inspección del historial conversacional limpio para heredar automáticamente el último dominio activo (gastos, recordatorios, general, equipaje) ante consultas conversacionales de seguimiento del usuario (p. ej., "¿cuánto gasté en total?", "borrar", "ver lista", "¿y si llueve?") sin requerir aclaraciones adicionales.
+    - *Capa 2: Sticky Routing & Context Inheritance*: Hereda automáticamente el último dominio activo (gastos, recordatorios, general, equipaje) ante consultas conversacionales de seguimiento sin requerir aclaraciones adicionales.
+    - *Capa 3: Restricción Reguladora a Europa*: Deniega el enrutamiento para consultas sobre visas o vacunas de países que no pertenecen a Europa, ya que los documentos cargados en el sistema solo cubren esta región.
+  - **Enrutamiento Múltiple Secuencial (Multi-Intent)**: Capacidad para procesar mensajes con múltiples intenciones ejecutando secuencialmente los sub-agentes correspondientes (ej: guardar un gasto y consultar un requisito de viaje en una sola respuesta).
   - **Interacción Directa / Smalltalk**: Capacidad del Supervisor LLM para abordar saludos, despedidas o clarificar dudas ambiguas directamente sin enrutamiento agéntico cuando no hay contexto previo.
 - **🔌 Arquitectura MCP Multiserver**:
   - **Finance MCP Server** (Puerto `8002`): Servidor independiente sobre SSE exclusivo para transacciones financieras CRUD de gastos.
   - **Reminder MCP Server** (Puerto `8003`): Servidor independiente sobre SSE exclusivo para la administración de recordatorios de viaje.
-- **⚙️ Validación Pydantic Dinámica**: Conversión automática al vuelo de los esquemas de parámetros JSON (`inputSchema`) de múltiples servidores MCP remotos en modelos tipados **Pydantic V2** (`create_model`), permitiendo que el LLM realice function calling robusto y seguro.
+- **⚙️ Validación Pydantic Dinámica & Caché TTL**:
+  - Conversión automática al vuelo de los esquemas de parámetros JSON (`inputSchema`) de múltiples servidores MCP remotos en modelos tipados **Pydantic V2** (`create_model`).
+  - Almacenamiento temporal en caché (TTL de 5 minutos) de las herramientas MCP descubiertas para optimizar la latencia conversacional.
+- **🛡️ Capa de Seguridad Global (Guardrails)**:
+  - *Input Guardrails*: Detección de idioma (`check_language` para inglés y español) y bloqueo determinista por expresiones regulares contra ataques de inyección de prompts (`check_prompt_injection`).
+  - *Output Guardrails*: Validación de integridad de salida (`check_output_integrity`) para interceptar fugas de trazas de error de Python (excepciones), delimitadores de plantillas LLM o directivas del sistema antes de presentárselas al usuario.
 - **💾 Persistencia e Integridad conversacional**: Persistencia estructurada de mensajes en una base de datos relacional SQLite que garantiza la integridad y alineación de turnos (User-Assistant Symmetry) en el historial de forma tolerante a fallos.
 - **⚡ Sub-Agentes sin Estado (Stateless)**: Ejecución aislada y sin estado de sub-agentes (sin checkpointer interno), evitando contaminación de estado cruzado (cross-contamination) entre agentes y reduciendo drásticamente el consumo de tokens.
-- **🔍 Sistema RAG avanzado**: Búsqueda semántica en documentos normativos (.txt y .pdf) usando ChromaDB y embeddings locales (`all-MiniLM-L6-v2`) con inicialización lazy para optimizar el startup del servidor principal.
+- **🔍 Sistema RAG avanzado**: Búsqueda semántica en documentos normativos (.txt y .pdf) usando ChromaDB y embeddings locales con inicialización lazy y fallback europeo integrado.
 - **💬 Interfaces múltiples**: Punto de acceso único para frontend web y Bot de Telegram (opcional).
 
 ---
@@ -42,10 +49,10 @@ flowchart TB
 
     subgraph Backend ["Capa de Presentación y Orquestación (Port 8000)"]
         API[" FastAPI (POST /message)"]
-        Router["🛠️ TravelAgentOrchestrator<br/>(Memoria, Conexión MCP & Filtro Historial)"]
+        Router["🛠️ TravelAgentOrchestrator<br/>(Memoria, Conexión MCP, TTL & Guardrails)"]
         
         subgraph Routing ["Orquestación Cognitiva"]
-            Supervisor["🧠 Supervisor LLM<br/>(Bilingual Keywords & Sticky Routing)"]
+            Supervisor["🧠 Supervisor LLM<br/>(Bilingual Keywords, Sticky Routing & Multi-intent)"]
         end
         
         subgraph Agents ["Sub-Agentes Especialistas Modulares"]
@@ -74,15 +81,15 @@ flowchart TB
     %% Flujo de Orquestación e Intención
     Router -->|1. Filtrar Historial conversacional limpio| Supervisor
     Supervisor -->|2a. Pequeña Charla o Aclaración Directa| Router
-    Supervisor -->|2b. Identificar Ruta Semántica [ROUTE]| Router
-    Router -->|3. Persistir HumanMessage en Checkpointer| Agents
+    Supervisor -->|2b. Identificar Ruta Semántica [ROUTES]| Router
+    Router -->|3. Ejecución Secuencial| Agents
 
     %% Enlace a herramientas MCP remotas
     FA -->|Llamada SSE| FM
     RA -->|Llamada SSE| RM
     GA -->|Tools Locales / RAG| VectorDB
-    REC -->|"obtener_tiempo (wttr.in)"| Internet(["🌐 wttr.in API"])
-    REC -->|"obtener_objetos (CSV)"| CSV(["📄 app/data/objetos.csv"])
+    REC -->|"get_weather (wttr.in)"| Internet(["🌐 wttr.in API"])
+    REC -->|"get_packing_items (CSV)"| CSV(["📄 app/data/objetos.csv"])
     
     %% Acceso a Datos
     FM --> DB
@@ -94,24 +101,25 @@ flowchart TB
 
 1. **Capa de Presentación** (Puerto `8000`):
    - `app/main.py`: Punto de entrada del backend y bot de Telegram.
-   - `app/api/endpoints.py`: Expone los 7 endpoints REST unificados y el panel de control agregando el catálogo y estado de salud de todos los servidores MCP externos.
+   - `app/api/endpoints.py`: Expone los 7 endpoints REST unificados.
 2. **Capa de Agentes y Orquestación** (`app/agents/`):
-    - `app/agents/orchestrator.py`: Orquestador y Router principal. Administra la conexión asíncrona a múltiples endpoints SSE mediante `AsyncExitStack`, distribuye de manera específica las herramientas descubiertas a cada sub-agente, maneja la traducción de esquemas MCP a Pydantic V2, implementa manejo robusto de excepciones de herramientas MCP (`ToolException`), y gestiona el flujo de persistencia conversacional e inyección de contexto.
+   - `app/agents/orchestrator/`: Paquete del orquestador (`__init__.py`, `orchestrator.py`, `mcp_client.py`, `agent_executor.py`, etc.). Administra la conexión asíncrona mediante `AsyncExitStack` y enruta subagentes concurrentemente.
+   - `app/agents/orchestrator/guardrails_input.py` y `guardrails_output.py`: Capas unificadas de validación de entrada (idioma, prompt injection) y de integridad de salida.
    - `app/agents/supervisor/`: Contiene al Agente Supervisor y su lógica de enrutamiento cognitivo:
-     - `app/agents/supervisor/agent.py`: Lógica del código de enrutamiento del Supervisor LLM.
+     - `app/agents/supervisor/agent.py`: Lógica del código de enrutamiento del Supervisor LLM (soporta enrutamiento múltiple).
      - `app/agents/supervisor/prompts.py`: Define el prompt cognitivo (`SUPERVISOR_SYSTEM_PROMPT`).
      - `app/agents/supervisor/supervisor_routing_skill.md`: Especificación técnica formal del skill de enrutamiento.
-   - `app/agents/finance/`: Agente Especialista en Finanzas (`agent.py`) y sus prompts (`prompts.py`).
-   - `app/agents/reminder/`: Agente Especialista en Recordatorios (`agent.py`) y sus prompts (`prompts.py`).
-   - `app/agents/general/`: Agente Especialista en Normas/Logística (`agent.py`) y sus prompts (`prompts.py`).
-   - `app/agents/recommender/`: Agente Recomendador de Equipaje (`agent.py`, `tools.py`, `prompts.py`). Agente local puro sin MCP. Sus herramientas async consultan `wttr.in` para el tiempo actual y leen el CSV de objetos por defecto. Sigue el patrón ReAct: clasifica cada objeto según clima y duración del viaje.
-    - `app/agents/general/tools.py`: Definiciones locales de herramientas del agente (`rules`, `logistics`).
-   - `app/data/objetos.csv`: Lista estándar de 30 objetos de viaje usada por el Recommender Agent para clasificación.
+   - `app/agents/finance/`: Agente Especialista en Finanzas (`agent.py`, `prompts.py`, `finance_skill.md`).
+   - `app/agents/reminder/`: Agente Especialista en Recordatorios (`agent.py`, `prompts.py`, `reminder_skill.md`).
+   - `app/agents/general/`: Agente Especialista en Normas/Logística (`agent.py`, `prompts.py`, `tools.py`, `general_skill.md`).
+   - `app/agents/recommender/`: Agente Recomendador de Equipaje (`agent.py`, `tools.py`, `prompts.py`, `recommender_skill.md`). Agente local puro sin MCP. Sus herramientas async en inglés (`get_weather` y `get_packing_items`) consultan `wttr.in` y el listado CSV.
+   - `app/agents/general/tools.py`: Definiciones locales de herramientas del agente (`rules`, `travel_search`).
+   - `app/data/objetos.csv`: Lista estándar de 30 objetos de viaje usada por el Recommender Agent.
 3. **Capa de Infraestructura y Servidores MCP**:
    - `app/mcp/finance/server.py` (Puerto `8002`): Servidor MCP independiente sobre SSE exclusivo para la manipulación CRUD de transacciones financieras.
    - `app/mcp/reminder/server.py` (Puerto `8003`): Servidor MCP independiente sobre SSE exclusivo para la gestión CRUD de recordatorios e itinerario.
    - `app/services/persistence/`: Lógica CRUD de base de datos relacional para gastos y recordatorios.
-   - `app/services/rag.py`: Lógica de embeddings semánticos y persistencia ChromaDB (lazy).
+   - `app/services/rag.py`: Lógica de embeddings semánticos y persistencia ChromaDB con interceptación de destinos fuera de Europa.
 
 ---
 
@@ -129,9 +137,6 @@ source .venv/bin/activate  # Linux/Mac
 
 # Instalar dependencias requeridas
 pip install -r requirements.txt
-
-# Dependencia de detección de idioma (incluida en requirements.txt)
-# pip install langdetect
 ```
 
 ### 3. Variables de entorno
@@ -158,46 +163,21 @@ LANGSMITH_TRACING=true
 LANGSMITH_ENDPOINT=https://api.smith.langchain.com
 LANGSMITH_API_KEY=your-langsmith-api-key-here
 LANGSMITH_PROJECT=travel-assistant
+
+# Brave Search API (Requerido para la herramienta de búsqueda de vuelos/hoteles 'travel_search')
+BRAVE_API_KEY=your-brave-api-key-here
+BRAVE_SEARCH_COUNT=5
 ```
 
-> Nota: Si no se define `MCP_SERVERS`, el cliente multiserver usará por defecto `http://localhost:8002/sse` y `http://localhost:8003/sse`. Si no se configuran las variables de LangSmith, el sistema funcionará normalmente en modo pasivo sin enviar trazas.
+---
 
 ## 4. Docker y arranque conjunto
-Se incluye `Dockerfile` y `docker-compose.yml` para lanzar los tres servicios en paralelo:
-- backend principal (`web`) en el puerto `8000`
-- servidor MCP de finanzas (`finance`) en el puerto `8002`
-- servidor MCP de recordatorios (`reminder`) en el puerto `8003`
+Se incluye `Dockerfile` y `docker-compose.yml` para lanzar los tres servicios en paralelo.
 
 ### Usar Docker Compose
 ```bash
 docker compose up --build
 ```
-
-### Detener los contenedores
-```bash
-docker compose down
-```
-
-### Volúmenes y persistencia
-- La base de datos SQLite se monta desde el proyecto local como volumen.
-- El store de ChromaDB también se monta para mantener el índice entre reinicios.
-
-### Notas
-- Asegúrate de tener `.env` en la raíz antes de levantar los servicios.
-- Si deseas ejecutar solo un servicio, usa `docker compose run --rm <service>`.
-
-### 5. Documentos normativos para RAG
-Copia tus archivos oficiales o normativos en la carpeta `rag_docs/`:
-- `visa.txt`: Políticas de visa y pasaportes.
-- `seguridad.txt`: Normas y advertencias.
-- `Documento_Viaje_UE.pdf`: Documentación oficial en PDF.
-
-### 6. Monitoreo y Observabilidad (LangSmith)
-El asistente cuenta con una integración para el rastreo visual del comportamiento agéntico. Si has configurado las variables de LangSmith en tu `.env`, puedes verificar la conexión ejecutando:
-```bash
-python -c "from langsmith import Client; client = Client(); print('Conectado. Proyectos activos:', [p.name for p in client.list_projects()])"
-```
-Una vez levantado el servidor principal, cualquier mensaje enviado al bot o a la API generará trazas detalladas en tiempo real de la ejecución agéntica, latencia y uso de tokens en [smith.langchain.com](https://smith.langchain.com/).
 
 ---
 
@@ -210,24 +190,13 @@ El sistema opera con **tres procesos concurrentes** para asegurar el desacoplami
 El script `start.sh` arranca los tres servicios en paralelo desde una única terminal, redirige los logs a `logs/` y los muestra en tiempo real. Presiona `Ctrl+C` para detener todos los procesos a la vez.
 
 ```bash
-# Asegúrate de tener el entorno virtual activado
 source .venv/bin/activate
-
 ./start.sh
 ```
-
-Los logs de cada servicio se guardan en:
-- `logs/finance.log` — Servidor MCP de Finanzas
-- `logs/reminder.log` — Servidor MCP de Recordatorios
-- `logs/main.log` — Backend principal
-
-> El script activa `.venv` automáticamente si no está activo y espera 2 segundos entre el arranque de los servidores MCP y el backend principal para garantizar que los puertos estén disponibles.
 
 ---
 
 ### Opción B — Tres terminales independientes
-
-Si prefieres controlar cada proceso por separado, abre tres terminales con el entorno virtual activado y ejecuta cada comando en una terminal distinta:
 
 #### 1. Iniciar el Servidor MCP de Finanzas (Puerto 8002)
 ```bash
@@ -246,128 +215,83 @@ python -m app.main
 
 ---
 
-## Endpoints del Backend Principal (Puerto 8000)
-
-El backend de presentación ofrece **7 endpoints de API unificados**:
-
-| Método | Ruta | Descripción |
-|--------|------|-------------|
-| `GET` | `/` | Health check básico de la API |
-| `GET` | `/app` | Sirve la interfaz interactiva web |
-| `POST` | `/message` | Envío de mensajes del usuario para ser procesados por el agente LangChain |
-| `GET` | `/expenses` | Obtiene el resumen total de gastos de la BD relacional |
-| `GET` | `/reminders` | Obtiene el catálogo de recordatorios guardados en la BD |
-| `GET` | `/status` | Estado dinámico de todos los módulos del sistema (servidores MCP 8002/8003, RAG, DB y Telegram) |
-| `GET` | `/mcp/tools` | Catálogo consolidado de herramientas de los servidores externos |
-
----
-
 ## Catálogo de Herramientas Consolidadas (13 totales)
 
 ### 1. Servidor de Finanzas (`finance_server` - Puerto `8002` - MCP)
 
-- `budget`: Obtiene el estado del presupuesto y el desglose de gastos acumulados por categoría.
+- `budget`: Obtiene el estado del presupuesto y el desglose de gastos acumulados.
 - `record_expense`: Registra un nuevo gasto financiero. (Campos requeridos: `amount`, `description`, `category`).
-- `query_expenses`: Consulta los gastos registrados con opción de filtrado. (Campos opcionales: `category`).
-- `modify_expense`: Modifica propiedades de un gasto por ID. (Campos requeridos: `id`; opcionales: `amount`, `description`, `category`).
-- `delete_expense`: Borra físicamente un gasto por ID único. (Campos requeridos: `id`).
+- `query_expenses`: Consulta los gastos registrados.
+- `modify_expense`: Modifica propiedades de un gasto por ID.
+- `delete_expense`: Borra físicamente un gasto por ID único.
 
 ### 2. Servidor de Recordatorios (`reminder_server` - Puerto `8003` - MCP)
 
-- `record_reminder`: Crea un nuevo recordatorio. (Campos requeridos: `title`, `due_time`; `note` opcional).
-- `query_reminders`: Lista recordatorios almacenados y permite filtrado.
+- `record_reminder`: Crea un nuevo recordatorio. (Campos requeridos: `title`, `due_time`).
+- `query_reminders`: Lista recordatorios almacenados.
 - `modify_reminder`: Modifica un recordatorio existente por ID.
 - `delete_reminder`: Elimina un recordatorio por ID.
 
 ### 3. Agente Recomendador de Equipaje (`recommender_agent` - Local)
 
-- `obtener_tiempo`: Consulta el clima actual para la ciudad de destino en tiempo real. (Campos requeridos: `ciudad`).
-- `obtener_objetos`: Obtiene la lista completa de objetos por defecto a clasificar desde el archivo CSV local.
+- `get_weather`: Consulta el clima actual para la ciudad de destino en tiempo real. (Campos requeridos: `city`).
+- `get_packing_items`: Obtiene la lista completa de objetos por defecto a clasificar desde el archivo CSV local.
 
 ### 4. Agente General (`general_agent` - Local)
 
 - `rules`: Realiza búsquedas semánticas (RAG) en los documentos normativos oficiales de viaje. (Campos requeridos: `text`).
-- `logistics`: Buscador de vuelos, hoteles y transportes (placeholder para futura integración con API externa). (Campos requeridos: `text`).
+- `travel_search`: Búsqueda en tiempo real de vuelos, hoteles y transportes mediante Brave Search.
+
+---
+
+## Pruebas Automatizadas (Unit/Integration Tests)
+
+El sistema cuenta con una suite de pruebas consolidada y estructurada en `scratch/test_suite.py` que valida de forma automatizada las siguientes áreas clave:
+- **Detección de Idiomas y Guardrails**: Filtros de detección de idioma, bypasses de longitud, y overrides basados en la heurística de palabras clave del español.
+- **Telegram Chunking**: Fragmentación automática de respuestas de más de 4000 caracteres.
+- **Directivas de Enfoque**: Validaciones estructurales y de contenido en los prompts del sistema de los subagentes.
+- **Enrutamiento del Supervisor (LLM)**: Decisiones de enrutamiento semántico, enrutamiento múltiple, y exclusión de temas fuera de ámbito o geográficos (Japón).
+- **Poda de Memoria**: Simulación de límites de retención basados en turnos de base de datos.
+
+### Ejecución de Pruebas
+
+Para ejecutar la suite completa de pruebas:
+```bash
+source .venv/bin/activate
+python scratch/test_suite.py
+```
+
+Para correr únicamente un grupo o caso de prueba específico (por ejemplo, el enrutamiento del supervisor):
+```bash
+python -m unittest scratch/test_suite.py -k TestSupervisorRouting
+```
 
 ---
 
 ## Protocolo de Pruebas E2E (Línea de Comandos)
 
-Una vez que los servidores estén en ejecución, puedes validar las operaciones de la siguiente forma:
-
 ### 1. Consultar el Estado del Asistente
 ```bash
 curl http://localhost:8000/status
 ```
-*Debe retornar el estado `online` global e información individual de ambos servidores MCP.*
 
-### 2. Crear y Manipular Gastos de Punta a Punta
-
-- **Registrar un gasto nuevo** (Llama a `record_expense` en port 8002):
+### 2. Registrar y Consultar un Gasto
 ```bash
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
   -d '{"text": "Anota un gasto de 45 euros en cena", "session_id": "test_e2e"}'
 ```
 
-- **Ver resumen presupuestario** (Llama a `budget` en el servidor de finanzas a través del agente):
+### 3. Consultas Normativas (RAG)
 ```bash
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
-  -d '{"text": "Muestra un resumen de mi presupuesto", "session_id": "test_e2e"}'
-```
-
-- **Modificar el gasto registrado** (Llama a `modify_expense` en port 8002):
-```bash
-# Asumiendo que el ID del gasto registrado fue 1
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Modifica el gasto con ID 1 para que el monto sea 50 euros y la categoría sea comida", "session_id": "test_e2e"}'
-```
-
-- **Borrar el gasto** (Llama a `delete_expense` en port 8002):
-```bash
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"text": "Elimina el gasto con ID 1", "session_id": "test_e2e"}'
-```
-
-### 3. Consultas Normativas e Itinerario
-
-- **Prueba RAG** (Llama a `rules` como herramienta local del agente):
-```bash
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"text": "¿Cuáles son los requisitos de visa para viajar?", "session_id": "test_e2e"}'
+  -d '{"text": "¿Cuáles son los requisitos de visa para viajar a España?", "session_id": "test_e2e"}'
 ```
 
 ### 4. Recomendador de Equipaje
-
-- **Clasificar objetos para un destino** (Enruta a `recommender`; llama a `obtener_tiempo` y `obtener_objetos`):
 ```bash
 curl -X POST http://localhost:8000/message \
   -H "Content-Type: application/json" \
-  -d '{"text": "Ayúdame a hacer la maleta para un viaje de 5 días a Tokio", "session_id": "test_e2e"}'
+  -d '{"text": "Ayúdame a hacer la maleta para un viaje de 5 días a Madrid", "session_id": "test_e2e"}'
 ```
-
-- **En inglés** (el agente responde en el idioma detectado):
-```bash
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"text": "What should I pack for 3 days in London?", "session_id": "test_e2e"}'
-```
-
-- **Seguimiento sticky** (hereda el contexto `recommender` automáticamente):
-```bash
-curl -X POST http://localhost:8000/message \
-  -H "Content-Type: application/json" \
-  -d '{"text": "¿Qué llevaría si además fuera a la playa?", "session_id": "test_e2e"}'
-```
-
----
-
-## Interfaz Web
-Abre `http://localhost:8000/app` en cualquier navegador web para interactuar de manera visual con la consola del chatbot y ver los gráficos de presupuesto agregados en tiempo real.
-
-## Licencia
-Proyecto académico de Trabajo Fin de Máster. Todos los derechos reservados.

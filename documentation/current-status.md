@@ -14,17 +14,18 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
 - **Modelo**: gpt-5-nano
 - **Funcionalidades**:
   - Clasificación inteligente e invocación directa de herramientas asíncronas estructuradas.
+  - Generación de respuestas de enrutamiento múltiple y secuencial.
   - Generación de respuestas contextuales enriquecidas por RAG.
   - Fallback controlado para errores de API del LLM.
 
-#### 2. Sistema RAG Avanzado
+#### 2. Sistema RAG Avanzado con Restricción de Alcance
 - **Base de datos vectorial**: ChromaDB con almacenamiento persistente local en `app/chromadb_store/`.
 - **Embeddings**: Sentence Transformers (`all-MiniLM-L6-v2`).
 - **Documentos**: Archivos normativos y de viaje (.txt y .pdf) en `rag_docs/`.
 - **Características**:
   - Inicialización lazy para optimizar los tiempos de inicio del servidor principal.
   - Búsqueda de coincidencia semántica en documentos locales.
-  - Respuesta fallback en texto cuando no hay documentos disponibles.
+  - **Filtro de Destino Europeo**: Intercepta consultas que no tengan coincidencia semántica suficiente en la base de datos (con similitud inferior al umbral o sin resultados), retornando una respuesta de fallback localizada y amigable explicando que el asistente de regulaciones y visados está limitado exclusivamente a destinos de Europa.
 
 #### 3. Servidores MCP Oficiales Desacoplados
  1. **Finance MCP Server** (Puerto `8002`): Gestiona operaciones CRUD de gastos de manera aislada y robusta.
@@ -39,68 +40,81 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
   - **Reminder Agent**: Confinado en `app/agents/reminder/` exclusivamente a herramientas de creación, modificación y listado de recordatorios.
   - **General Agent**: Administra el flujo del RAG para normativas de viaje y soporte local desde `app/agents/general/`.
   - **Recommender Agent**: Sugiere equipaje y clasifica objetos de viaje según el clima del destino (sin MCP, consume `wttr.in`) desde `app/agents/recommender/`.
+- **Enrutamiento Secuencial de Múltiples Intenciones (Opción A)**:
+  - El Supervisor y Orquestador permiten identificar y ejecutar una lista de rutas especializadas secuencialmente en un único mensaje del usuario (por ejemplo: *"visado España y guarda taxi 20"* activa de forma consecutiva a `finance` y `general`).
+- **Caché TTL de Herramientas**:
+  - El orquestador almacena en caché temporal (TTL de 5 minutos) las herramientas e input schemas de los servidores MCP remotos para minimizar latencia y consumo de recursos de red.
 - **Enrutamiento Cognitivo Unificado (Supervisor Skill)**:
-  - *Capa 1: Bilingual Keywords*: Identificación semántica inteligente de intenciones ante palabras clave bilingües de finanzas, recordatorios y normativas directamente en el prompt del sistema.
-  - *Capa 2: Sticky Routing & Context Inheritance*: Herencia contextual automática del último dominio activo en el historial conversacional ante consultas breves o de continuación del usuario (p. ej., "borrar", "¿cuánto gasté?").
-  - *Interacción Directa*: Capacidad del Supervisor para responder Smalltalk o clarificar dudas ambiguas directamente sin enrutamiento agéntico.
-- **Conectividad y Robustez**: Uso de `AsyncExitStack` paraStreams SSE paralelos.
-- **Validación Dinámica**: Mapeo robusto e instantáneo de catálogos MCP a Pydantic V2.
-- **Salvedades de Persistencia y Memoria**: Persistencia de mensajes estructurada en SQLite con alineación de turnos (User-Assistant Symmetry) garantizada y tolerancia a fallos. Eliminación completa de la dependencia de checkpointers en sub-agentes para erradicar contaminaciones cruzadas y token overhead.
+  - *Capa 1: Bilingual Keywords*: Identificación semántica inteligente de intenciones ante palabras clave bilingües.
+  - *Capa 2: Sticky Routing & Context Inheritance*: Herencia contextual automática del último dominio activo.
+  - *Capa 3: Restricción de Normativas a Europa*: Instrucción al supervisor para no enrutar visados o requisitos de destinos no europeos, respondiendo con un rechazo directo y localizado.
+  - *Interacción Directa*: Capacidad del Supervisor para responder Smalltalk o clarificar dudas ambiguas.
 
-#### 5. Capa de Servicios de Dominio (Clean Architecture)
+#### 5. Capa de Seguridad Global (Guardrails)
+Consolidada en `app/agents/orchestrator/guardrails_input.py` y `guardrails_output.py`. Se eliminaron los guardrails obsoletos específicos de subpaquetes.
+- **Guardrails de Entrada**:
+  - *Filtro de Idioma mejorado*: Bypass automático para mensajes de menos de 3 palabras (p. ej. "hola", "ok", "hi") para evitar falsos positivos en textos cortos. Para mensajes más largos, usa `detect_langs()` con un umbral de confianza del 85% antes de bloquear.
+  - *Detección de Prompt Injection*: Filtro determinísta por expresiones regulares compiladas sin latencia para bloquear ataques de anulación de instrucciones, cambio de rol y exfiltración de prompts de sistema.
+- **Guardrails de Salida (Output Integrity)**:
+  - *Filtro de Trazas de Error*: Bloquea salidas que expongan excepciones crudas de Python o stack tracebacks.
+  - *Filtro de Tokens LLM*: Detecta y bloquea fugas de tokens de formato/plantilla (`[INST]`, `<<SYS>>`).
+  - *Filtro de Instrucciones de Sistema*: Bloquea la salida de reglas y directivas internas de sistema detectadas.
+
+#### 6. Capa de Servicios de Dominio (Clean Architecture)
 - La lógica de negocio principal está centralizada en los módulos de persistencia bajo `app/services/persistence/`.
-- Las herramientas locales del agente (`rules`, `logistics`, `obtener_tiempo` y `obtener_objetos`) se encuentran en sus respectivos subdirectorios de agentes (p. ej., [app/agents/general/tools.py](file:///Users/carlosmoncada/Documents/code/master/tfm/travel-assitant/app/agents/general/tools.py) y [app/agents/recommender/tools.py](file:///Users/carlosmoncada/Documents/code/master/tfm/travel-assitant/app/agents/recommender/tools.py)).
-- No existe actualmente un archivo de servicios de dominio global como `TravelServices`; la arquitectura funciona con un router agnóstico que consume servicios MCP remotos.
+- Las herramientas locales del agente (`rules`, `travel_search`, `get_weather` y `get_packing_items`) se encuentran en sus respectivos subdirectorios de agentes. Nombres de clases y rutinas internas estandarizados en inglés.
 
-#### 6. Persistencia de Datos
+#### 7. Persistencia de Datos
 - **Base de datos**: SQLite local con SQLAlchemy ORM.
 - **Entidades**: Gastos (`Expense`) y recordatorios (`Reminder`).
 - **Operaciones**: CRUD completo (`save`, `get_summary`, `modify`, `delete`) con transacciones seguras.
 
-#### 7. Interfaces de Usuario e Integraciones
+#### 8. Interfaces de Usuario e Integraciones
 - **API REST**: 7 endpoints unificados en el puerto `8000`.
 - **Bot Telegram**: Integración opcional lista para producción mediante Token de Telegram.
 - **Frontend Web**: Consola interactiva en HTML/JS con gráficos agregados en tiempo real.
 
-#### 8. Monitoreo y Observabilidad (LangSmith)
-- **Framework**: Integración nativa con la suite de observabilidad de LangSmith.
-- **Características**:
-  - Decoradores `@traceable` en las funciones críticas de `TravelAgentOrchestrator` (`_run_specialized_agent` y `handle_message`).
-  - Monitoreo en tiempo real de flujos agénticos de decisión (enrutamiento de supervisor y ejecución de agentes específicos).
-  - Trazabilidad de latencia, coste de tokens, llamadas al LLM e interacciones con herramientas.
-  - Modo autocontenido pasivo (*no-op*) integrado: si no están presentes las credenciales correspondientes en el entorno, el código se ejecuta de forma habitual sin interrupciones.
+#### 9. Monitoreo y Observabilidad (LangSmith)
+- **Framework**: Integración nativa con la suite de observabilidad de LangSmith mediante decoradores `@traceable`.
 
 ---
 
-### 🔄 Cambios Recientes (Refactorización Multiserver y Multi-Agente)
+### 🔄 Cambios Recientes
 
-#### 1. Separación de Servidores MCP
-- **Antes**: Un único servidor en el puerto 8001 que exponía herramientas pasivas.
-- **Ahora**: Creación de una carpeta modular `app/mcp/` y división física de responsabilidades en subpaquetes dedicados:
-  - `app/mcp/finance/server.py` y `app/mcp/finance/tools.py` en puerto `8002` (exclusivo para operaciones CRUD de gastos).
-  - `app/mcp/reminder/server.py` y `app/mcp/reminder/tools.py` en puerto `8003` (exclusivo para operaciones CRUD de recordatorios).
-- **Limpieza**: Eliminación del soporte legado y consolidación de los servidores MCP en subpaquetes dedicados.
+#### 1. Unificación y Estandarización a Inglés
+- Estandarizados todos los comentarios y docstrings de los módulos compartidos de guardrails (`guardrails_input.py` y `guardrails_output.py`) al idioma inglés.
+- Renombradas clases y funciones locales en `recommender/tools.py` a inglés (`ObtenerTiempoSchema` -> `GetWeatherSchema`, `obtener_tiempo` -> `get_weather`, etc.).
+- Actualizados prompts del supervisor y recomendador para emplear los nuevos identificadores de herramientas en inglés.
 
-#### 2. Transición a Arquitectura Multi-Agente Modularizada
-- **Antes**: Sub-agentes planos (`finance_agent.py`, `reminder_agent.py`, `general_agent.py`, `supervisor_agent.py`) en la raíz de `app/agents/` compartiendo un `prompts.py` centralizado.
-- **Ahora**: Modularización física por agente en subdirectorios individuales dentro de `app/agents/`:
-  - `app/agents/supervisor/`: Agente Supervisor con su lógica `agent.py`, prompts de enrutamiento `prompts.py` y especificación técnica `supervisor_routing_skill.md`.
-  - `app/agents/finance/`: Sub-agente financiero con su constructor `agent.py` y prompts dedicados.
-  - `app/agents/reminder/`: Sub-agente de recordatorios con su constructor `agent.py` y prompts dedicados.
-  - `app/agents/general/`: Sub-agente general con su constructor `agent.py` y prompts dedicados.
-  - `app/agents/recommender/`: Sub-agente recomendador de equipaje con su constructor `agent.py`, prompts dedicados y herramientas locales.
-  - **Limpieza de Fallback**: Eliminación completa de `app/agents/prompts.py` (antiguo prompt general de fallback), delegando toda petición de ruta no reconocida directamente al agente `general` de forma robusta.
+#### 2. Implementación de Guardrails de Salida e Integridad
+- Añadida la lógica de validación `check_output_integrity` en `guardrails_output.py` conectándola a todas las salidas del orquestador y supervisor para evitar la filtración de fallos de compilación u otros detalles internos de código hacia el usuario final.
 
-#### 3. Estabilidad y Gestión de Memoria Stateless
-- **Conversión a Sub-agentes Stateless**: Los sub-agentes se ejecutan sin checkpointers y sin estado compartido, eliminando la duplicación del historial, la sobrecarga de tokens por llamadas internas a herramientas MCP pasadas, y la contaminación de estado cruzado.
-- **Distribución de Herramientas desde el Orquestador**: Las herramientas dinámicas descubiertas de servidores MCP se asocian a su URL/Puerto de origen y se distribuyen selectivamente a cada sub-agente, desacoplándolos de lógica de filtrado dura.
-- **Contexto Global de Fechas**: Inyección de un resolver dinámico de fechas relativas (`app/utils/date_resolution.py`) en recordatorios y finanzas, permitiendo que ambos interpreten adecuadamente expresiones como "ayer", "este viernes", etc.
-- **Robustez de Errores con ToolException**: Implementación de excepciones estructuradas (`ToolException`) con captura controlada (`handle_tool_error=True`) en todas las herramientas MCP para informar de forma segura al LLM sobre caídas de red o fallos de transacciones.
-- **Garantía de Turnos en BD**: Guardado temprano de mensajes del usuario para asegurar la integridad de la base de datos de chats en SQLite frente a excepciones durante el flujo de ejecución.
+#### 3. Caché de Herramientas MCP con TTL
+- Añadido un caché temporal con TTL de 300 segundos a `TravelAgentOrchestrator._discover_mcp_tools` en `orchestrator.py` para almacenar las herramientas dinámicas consultadas en los servidores remotos de forma consistente.
 
-#### 4. Unificación en el Backend de Presentación
-- El endpoint `/status` se actualizó para interrogar concurrentemente a los servidores de herramientas MCP en sus respectivos puertos, calculando la disponibilidad del sistema de forma global y agregada.
-- El catálogo de herramientas expuesto en `/mcp/tools` se consolida dinámicamente consultando los servidores disponibles, garantizando la retrocompatibilidad con el panel web frontend.
+#### 4. Restricción Reguladora a Europa
+- Limitación estricta a nivel de Supervisor y motor RAG para rechazar amigablemente y en el idioma del usuario cualquier petición de normativa de viaje (visas, pasaportes, vacunas) que involucre destinos fuera de Europa.
+
+#### 5. Ejecución en Serie de Agentes (Multi-routing)
+- Modificado el esquema de decisión del Supervisor a `routes: list[str]` para enrutar múltiples sub-agentes secuencialmente, y modificado el bucle en `orchestrator.py` para procesarlos ordenadamente concatenando sus respuestas.
+
+#### 6. Mejora del Guardrail de Idioma (anti-falsos-positivos)
+- Reemplazado `langdetect.detect()` por `detect_langs()` con umbral de confianza del 85% (`_MIN_LANG_CONFIDENCE`).
+- Añadido bypass automático para mensajes de menos de 3 palabras (`_MIN_WORDS_FOR_LANG_DETECTION`) para evitar bloquear saludos cortos como "hola" o "hi" que `langdetect` clasifica erróneamente.
+
+#### 7. Fix `httpx.utils.quote` en Recommender Tools
+- Corregido el error `AttributeError: module 'httpx' has no attribute 'utils'` en `app/agents/recommender/tools.py`.
+- Sustituido `httpx.utils.quote(city)` por `urllib.parse.quote(city)` (stdlib estándar de Python), ya que `httpx.utils` no forma parte de la API pública de httpx.
+
+#### 8. Double Confirmation para Acciones Destructivas en Finanzas
+- Añadida la regla 5 al prompt del Finance Agent: antes de ejecutar `modify_expense` o `delete_expense`, el agente solicita confirmación explícita al usuario, advirtiendo que la acción no tiene rollback.
+
+#### 9. Categorías Estándar de Gastos
+- Añadida la regla 6 al prompt del Finance Agent: al registrar o modificar gastos, el agente asigna automáticamente la categoría canónica (Comida/Food, Transporte/Transport, Alojamiento/Accommodation, Entretenimiento/Entertainment, Otros/Others) mapeando conceptos en lenguaje natural.
+
+#### 10. Consolidación de Suite de Pruebas Automatizadas
+- Creada la suite de pruebas unificada en `scratch/test_suite.py` que consolida de forma automatizada las validaciones de guardrails de idioma y inyección, división de respuestas largas en Telegram, directivas de enfoque de los agentes, simulación de turnos de mensajes de base de datos, y enrutamientos semánticos/geográficos del Supervisor LLM.
+- Eliminados 17 scripts de pruebas obsoletos o redundantes en la carpeta `scratch/` para mantener el repositorio limpio y ordenado.
 
 ---
 
@@ -127,20 +141,22 @@ travel-assistant/
 ├── app/
 │   ├── main.py                         # FastAPI App principal en puerto 8000
 │   ├── api/
-│   │   └── endpoints.py                # 7 endpoints unificados
-│   ├── agents/                         # Módulo de agentes y orquestación
-│   │   ├── __init__.py
-│   │   ├── orchestrator.py             # Cliente Multiserver asíncrono con Pydantic y persistencia
+│   │   ├── endpoints.py                # 7 endpoints unificados
+│   │   ├── orchestrator/               # Módulo encapsulado del orquestador
+│   │   │   ├── __init__.py
+│   │   │   ├── orchestrator.py         # Cliente Multiserver asíncrono con Pydantic, TTL y enrutamiento concurrente
+│   │   │   ├── guardrails_input.py     # Guardrail global de idioma e inyección
+│   │   │   └── guardrails_output.py    # Guardrail global de integridad de salida
 │   │   ├── supervisor/                 # Agente Supervisor y Enrutador Cognitivo
 │   │   │   ├── __init__.py
-│   │   │   ├── agent.py                # Lógica del Supervisor (Código de Enrutamiento)
-│   │   │   ├── prompts.py              # Prompts específicos del Supervisor (SUPERVISOR_SYSTEM_PROMPT)
+│   │   │   ├── agent.py                # Lógica del Supervisor (Routes list)
+│   │   │   ├── prompts.py              # Prompts específicos con filtros geográficos
 │   │   │   └── supervisor_routing_skill.md  # Especificación del Skill
 │   │   ├── finance/                    # Agente Especialista en Finanzas
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica de construcción del sub-agente
 │   │   │   ├── prompts.py              # FINANCE_AGENT_SYSTEM_PROMPT
-│   │   │   └── guardrails.py           # Guardrails de idioma e inyección
+│   │   │   └── finance_skill.md        # Especificación del Skill de Finanzas
 │   │   ├── reminder/                   # Agente Especialista en Recordatorios
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica de construcción del sub-agente
@@ -150,12 +166,14 @@ travel-assistant/
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica de construcción del sub-agente
 │   │   │   ├── prompts.py              # GENERAL_AGENT_SYSTEM_PROMPT
-│   │   │   └── tools.py                # Herramientas locales del agente general (rules, logistics)
+│   │   │   ├── tools.py                # Herramientas locales del agente general (rules, travel_search)
+│   │   │   └── general_skill.md        # Especificación del Skill General
 │   │   └── recommender/                # Agente Recomendador de Equipaje (Agente local)
 │   │       ├── __init__.py
 │   │       ├── agent.py                # Lógica de construcción del sub-agente
 │   │       ├── prompts.py              # RECOMMENDER_SYSTEM_PROMPT
-│   │       └── tools.py                # Herramientas locales de equipaje (obtener_tiempo, obtener_objetos)
+│   │       ├── tools.py                # Herramientas locales de equipaje en inglés (get_weather, get_packing_items)
+│   │       └── recommender_skill.md    # Especificación del Skill Recomendador
 │   ├── connectors/
 │   │   └── telegram_bot.py             # Integración opcional con Telegram
 │   ├── frontend/                       # Archivos de interfaz web (consola y gráficos)
@@ -171,11 +189,13 @@ travel-assistant/
 │   │       └── server.py               # Servidor MCP de recordatorios
 │   ├── services/
 │   │   ├── llm.py                      # Lógica de integración con OpenAI
-│   │   ├── rag.py                      # ChromaDB + embeddings locales
+│   │   ├── rag.py                      # ChromaDB + RAG con fallback europeo
 │   │   └── persistence/
 │   │       ├── db.py
 │   │       ├── expense_persistence.py
 │   │       └── reminder_persistence.py
+│   └── utils/
+│       └── date_resolution.py
 ├── rag_docs/                           # Documentos para RAG (.txt y .pdf)
 ├── documentation/                      # Documentación técnica del proyecto (arquitectura, frontend)
 └── README.md                           # Documento principal del repositorio
@@ -211,7 +231,7 @@ travel-assistant/
 | `modify_reminder` | `reminder_server` | 8003 | `id` (int), opcionales `title`, `due_time`, `note` |
 | `delete_reminder` | `reminder_server` | 8003 | `id` (int) |
 
-Adicionalmente, el agente expone localmente las herramientas `rules`, `logistics`, `obtener_tiempo` y `obtener_objetos`.
+Adicionalmente, el agente expone localmente las herramientas `rules`, `travel_search`, `get_weather` y `get_packing_items`.
 
 ---
 
@@ -221,4 +241,4 @@ Adicionalmente, el agente expone localmente las herramientas `rules`, `logistics
 - **Servidor de Recordatorios (8003)**: ✅ **COMPLETADO & ONLINE**
 - **Integridad del Negocio**: La modularización de las carpetas respeta el Clean Architecture, desacoplando los servicios de las capas de transporte y serialización.
 
-*Última actualización: Mayo 2026*
+*Última actualización: Julio 2026*

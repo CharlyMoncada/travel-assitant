@@ -24,31 +24,35 @@ flowchart TB
         subgraph Orchestration ["Capa de Agentes (app/agents/)"]
             Router["🛠️ TravelAgentOrchestrator<br/>(Sesiones MCP, Poda & Memoria)"]
             
-            subgraph Routing ["Enrutamiento Híbrido"]
-                Bypass{"⚡ Pre-check Determinista"}
+            subgraph Safety ["Capa de Seguridad Global (guardrails_input.py / guardrails_output.py)"]
+                InputG["🛡️ Global Input Guardrails<br/>(Idioma / Prompt Injection)"]
+                OutputG["🛡️ Global Output Guardrails<br/>(Fugas / Tracebacks / Tokens)"]
+            end
+            
+            subgraph Routing ["Enrutamiento Concurrente (supervisor/agent.py)"]
                 Supervisor["🧠 Supervisor LLM<br/>(Inferencia Semántica & Chat)"]
             end
             
             subgraph Agents ["Sub-Agentes Especialistas Modulares"]
-            FA["💰 Finance Agent<br/>(finance/agent.py)"]
-            RA["⏰ Reminder Agent<br/>(reminder/agent.py)"]
-            GA["📚 General Agent<br/>(general/agent.py)"]
-            REC["🎒 Recommender Agent<br/>(recommender/agent.py)"]
+                FA["💰 Finance Agent<br/>(finance/agent.py)"]
+                RA["⏰ Reminder Agent<br/>(reminder/agent.py)"]
+                GA["📚 General Agent<br/>(general/agent.py)"]
+                REC["🎒 Recommender Agent<br/>(recommender/agent.py)"]
+            end
         end
     end
-end
 
-subgraph Servers ["Servidores de Herramientas MCP (Transporte SSE)"]
-    FM["🔌 Finance MCP Server<br/>Port 8002"]
-    RM["🔌 Reminder MCP Server<br/>Port 8003"]
-end
+    subgraph Servers ["Servidores de Herramientas MCP (Transporte SSE)"]
+        FM["🔌 Finance MCP Server<br/>Port 8002"]
+        RM["🔌 Reminder MCP Server<br/>Port 8003"]
+    end
 
-subgraph Services ["Capa de Servicios y Negocio"]
-    RULES["Tools locales RAG<br/>app/agents/general/tools.py"]
-    PERSIST["Persistencia de dominio<br/>app/services/persistence/"]
-    RAG["app/services/rag.py<br/>ChromaDB + SentenceTransformers"]
-    REC_TOOLS["Tools locales equipaje<br/>app/agents/recommender/tools.py"]
-end
+    subgraph Services ["Capa de Servicios y Negocio"]
+        RULES["Tools locales RAG<br/>app/agents/general/tools.py"]
+        PERSIST["Persistencia de dominio<br/>app/services/persistence/"]
+        RAG["app/services/rag.py<br/>ChromaDB + SentenceTransformers"]
+        REC_TOOLS["Tools locales equipaje<br/>app/agents/recommender/tools.py"]
+    end
 
     subgraph Storage ["Almacenamiento y Persistencia"]
         DB[("🗄️ SQLite DB<br/>travel_assistant.db")]
@@ -60,12 +64,13 @@ end
     Web --> ENDPOINTS
     ENDPOINTS --> Router
 
-    %% Enrutamiento Interno
-    Router --> Bypass
-    Bypass -->|Mensaje Determinista| Agents
-    Bypass -->|Evaluación Semántica| Supervisor
-    Supervisor -->|Charla / Clarificación| Router
-    Supervisor -->|Identificación Semántica [ROUTE]| Agents
+    %% Enrutamiento y Seguridad
+    Router --> InputG
+    InputG -->|Mensaje Seguro| Supervisor
+    Supervisor -->|Charla / Clarificación| OutputG
+    Supervisor -->|Identificación Semántica [ROUTES]| Agents
+    Agents --> OutputG
+    OutputG --> Router
 
     %% Conexiones e Invocaciones MCP / Locales
     FA -->|Llamada SSE| FM
@@ -91,6 +96,7 @@ end
 - Integración nativa con la API de bots de Telegram.
 - Recibe mensajes del usuario, los pasa al orquestador asíncrono y retorna la respuesta procesada.
 - Inicializado de forma segura solo si se detecta la variable `TELEGRAM_TOKEN`.
+- **Mecanismo de Envío Fragmentado (Chunking)**: Incorpora un sistema automático de división para fragmentar respuestas mayores de 4000 caracteres, segmentándolas por saltos de línea (`\n`) o espacios y transmitiéndolas de manera sucesiva para prevenir caídas de la API por límite de longitud (`Message is too long`).
 
 #### Web Frontend (`app/frontend/`)
 - Panel interactivo simple y moderno con una consola de chat y gráficos de gastos en tiempo real.
@@ -126,21 +132,26 @@ La arquitectura del asistente se ha modularizado y segmentado en múltiples arch
 #### A. Orquestador y Cliente Multiserver (`app/agents/orchestrator.py`)
 - **`TravelAgentOrchestrator`**: Actúa como el punto de contacto unificado del backend con la infraestructura de agentes y servidores de herramientas.
 - **Cliente Multiserver MCP**: Usa `AsyncExitStack` para abrir dinámicamente conexiones de stream de eventos de servidor (SSE) con múltiples microservicios concurrentes (`finance_server` y `reminder_server`).
-- **Traductor Pydantic Dinámico**: Convierte las definiciones en formato JSON `inputSchema` provenientes de los servidores MCP en clases **Pydantic V2** tipadas en tiempo de ejecución. Esto garantiza function calling de altísima precisión.
-- **Filtrado Selectivo del Historial (`_get_clean_history`)**: Antes de consultar al Supervisor LLM, extrae un historial limpio omitiendo las etiquetas de enrutamiento interno (`[ROUTE: ...]`) y los mensajes de bajo nivel (`ToolMessage` y `AIMessage` con llamadas a funciones). Esto le presenta al Supervisor una línea de tiempo conversacional nítida (solo `HumanMessage` y `AIMessage` puros de interacción directa) ideal para tomar decisiones de *Sticky Routing*.
-- **Persistencia de Estado Robusta y Checkpointer Fix**: Cuando el Supervisor decide desviar la consulta a un especialista, el Router inserta de forma explícita el `HumanMessage` actual en el checkpointer de LangGraph `MemorySaver` antes de invocar al sub-agente. Esto soluciona la inconsistencia en hilos conversacionales persistentes (donde el sub-agente creaba respuestas AI huérfanas de mensaje inicial del usuario en el checkpointer) y erradica errores de transaccionalidad de hilos paralelos.
-- **Gestión de Memoria y Poda**: Instrumenta un algoritmo de poda conversacional por turnos completos (`_prune_history_if_needed`), manteniendo los últimos 3 turnos conversacionales de usuario completos en el checkpointer para optimizar el contexto.
+- **Traductor Pydantic Dinámico**: Convierte las definiciones en formato JSON `inputSchema` provenientes de los servidores MCP en clases **Pydantic V2** tipadas en tiempo de ejecución.
+- **Caché TTL de Herramientas**: Implementa una política de expiración por tiempo (TTL de 5 minutos / 300 segundos) para almacenar en caché las herramientas de los servidores MCP y evitar peticiones innecesarias en cada mensaje.
+- **Validación de Seguridad en Dos Direcciones (Global Guardrails)**:
+  - *Entrada (Language & Prompt Injection)*: En la entrada de `handle_message`, valida que la consulta esté en inglés o español (`check_language`) y no intente ataques de inyección (`check_prompt_injection`).
+  - *Salida (Output Integrity)*: Antes de responder, valida que el mensaje final no contenga trazas de error crudas, tokens de plantillas LLM o directrices internas del prompt (`check_output_integrity`).
+- **Enrutamiento Múltiple Secuencial**: Permite la ejecución de múltiples sub-agentes especialistas en serie ante consultas que contengan múltiples intenciones (ej. registrar un gasto y preguntar un requisito de viaje). El orquestador acumula las respuestas y retorna una respuesta integrada.
+- **Directivas de Enfoque Especialistas**: Con el fin de evitar duplicaciones y resúmenes cruzados redundantes, inyecta a cada agente (finance, reminder, recommender, general) directivas del sistema muy restrictivas obligándolos a reportar única y exclusivamente información correspondiente a sus herramientas y dominios.
+- **Filtrado Selectivo del Historial (`_get_clean_history`)**: Antes de consultar al Supervisor LLM, extrae un historial limpio omitiendo los metadatos de enrutamiento y mensajes de bajo nivel.
+- **Evitación de duplicados en el Supervisor**: Remueve el último mensaje de usuario guardado en el historial persistente antes de construir el prompt del Supervisor para evitar duplicar el mensaje actual con la plantilla de inyección de memoria.
+- **Gestión de Memoria y Poda**: Instrumenta un algoritmo de poda conversacional por turnos completos (`_prune_history_if_needed`), manteniendo los últimos 3 turnos conversacionales de usuario completos en el checkpointer.
 
 #### B. Supervisor Enrutador Cognitivo (`app/agents/supervisor/`)
 Encargado de la toma de decisiones en el enrutamiento de intenciones aplicando las directrices cognitivas del sistema:
-- **`app/agents/supervisor/agent.py`**: Aloja la lógica del código del Supervisor LLM (`run_supervisor`), ejecutando la inferencia de enrutamiento cognitivo o respuestas directas.
-- **System Prompts (`app/agents/supervisor/prompts.py`)**: Define `SUPERVISOR_SYSTEM_PROMPT` que inyecta las directrices cognitivas (Layer 1: palabras clave bilingües, Layer 2: sticky routing y Layer 3: chit-chat/ambigüedad) para clasificar la consulta de forma extremadamente flexible y dinámica.
-- **Especificación Técnica (`app/agents/supervisor/supervisor_routing_skill.md`)**: Describe formalmente el comportamiento de enrutamiento y las capas cognitivas del skill del Supervisor.
-- **Formato de Respuesta Estricto**: Retorna un token formal de enrutamiento (como `[ROUTE: finance]`, `[ROUTE: reminder]`, `[ROUTE: general]`) o una respuesta directa aclaratoria/social (Smalltalk) si no hay contexto previo o la consulta es informal.
+- **`app/agents/supervisor/agent.py`**: Aloja la lógica del código del Supervisor LLM (`run_supervisor`), ejecutando la inferencia de enrutamiento cognitivo o respuestas directas, soportando múltiples destinos (`routes: list[str]`).
+- **System Prompts (`app/agents/supervisor/prompts.py`)**: Define las directrices cognitivas (Layer 1: palabras clave bilingües, Layer 2: sticky routing y Layer 3: chit-chat/ambigüedad) y las restricciones geográficas de normativas (Europa únicamente).
+- **Especificación Técnica (`app/agents/supervisor/supervisor_routing_skill.md`)**: Describe formalmente el comportamiento de enrutamiento del skill del Supervisor.
 
 #### C. Fábricas de Sub-Agentes Specialists Modulares
 Cada sub-agente corre sobre un grafo simplificado de LangGraph independiente, aislando totalmente su comportamiento para evitar falsos function callings:
-- **Finance Agent** (`app/agents/finance/`): Inicializa un agente focalizado. Filtra estrictamente el catálogo unificado de herramientas para exponer exclusivamente las de gastos (`expense`, `budget`) y carga el prompt de comportamiento financiero (`prompts.py`).
+- **Finance Agent** (`app/agents/finance/`): Inicializa un agente financiero enfocado en herramientas CRUD de gastos (`expense`, `budget`).
 - **Reminder Agent** (`app/agents/reminder/`): Inicializa el agente de itinerario, exponiendo única y exclusivamente las herramientas CRUD de recordatorios.
 - **General Agent** (`app/agents/general/`): Emplea las herramientas locales de consulta documental (RAG) y logística local.
 - **Recommender Agent** (`app/agents/recommender/`): Sugiere equipaje y clasifica objetos de viaje según el clima del destino (haciendo uso de wttr.in y el listado de objetos CSV).
@@ -158,17 +169,14 @@ Organizados en el directorio modularizado **`app/mcp/`**:
 
 #### B. Reminder MCP Server (`app/mcp/reminder/server.py` & `app/mcp/reminder/tools.py` - Puerto `8003`)
 - Servidor MCP oficial autónomo dedicado en exclusiva a la gestión de recordatorios e itinerario.
-- Mantiene por separado la definición estructurada de las herramientas (`tools.py`) de la lógica del transporte SSE (`server.py`).
 - Expone 4 herramientas CRUD estructuradas: `record_reminder`, `query_reminders`, `modify_reminder` y `delete_reminder`.
-- Conectado directamente a las operaciones de la capa de persistencia en la base de datos relacional.
 
 #### C. Capa de Persistencia (`app/services/persistence/`)
 - Lógica de almacenamiento e interacción con SQLite mediante SQLAlchemy.
-- Provee las consultas y mutaciones de datos relacionales seguras de gastos y recordatorios.
 
 #### D. Capa RAG (`app/services/rag.py`)
 - Recuperación semántica en base de datos ChromaDB con embeddings vectoriales generados por Sentence Transformers (`all-MiniLM-L6-v2`).
-- Resuelve consultas normativas e introduce el contexto en el sistema RAG de forma perezosa (lazy).
+- **Restricción Europea Estricta**: Si la consulta no tiene coincidencia semántica en la base de datos (lo cual ocurre para destinos fuera de Europa, ya que solo se dispone de documentación europea), intercepta la petición y devuelve un mensaje de advertencia localizado indicando que solo ofrece soporte regulatorio para destinos de Europa.
 
 ---
 
@@ -185,35 +193,20 @@ Organizados en el directorio modularizado **`app/mcp/`**:
 | `query_reminders` | `reminder_server` | 8003 | (ninguno) | Lista todos los recordatorios registrados |
 | `modify_reminder` | `reminder_server` | 8003 | `id` (int), opcionales `title`, `due_time`, `note` | Edita propiedades de un recordatorio existente |
 | `delete_reminder` | `reminder_server` | 8003 | `id` (int) | Borra permanentemente un recordatorio |
-| `obtener_tiempo` | `recommender_agent` | *(local)* | `ciudad` (str) | Consulta el clima actual para una ciudad usando wttr.in |
-| `obtener_objetos` | `recommender_agent` | *(local)* | Ninguno | Devuelve la lista estándar de objetos para clasificar |
 
-
-Además, el agente expone herramientas locales no MCP: `rules`, `logistics`, `obtener_tiempo` y `obtener_objetos`.
+Además, el agente expone herramientas locales no MCP: `rules` (RAG normativo), `travel_search` (búsqueda web con Brave Search), `get_weather` (clima vía wttr.in) y `get_packing_items` (lista de objetos a clasificar).
 
 ---
 
-## Flujo de procesamiento de un mensaje
+### 6. Flujo de procesamiento de un mensaje
 
 El procesamiento de cualquier solicitud en el sistema sigue una secuencia estructurada de enrutamiento cognitivo unificado y ejecución aislada:
 
 1. **Recepción del Mensaje**: El usuario interactúa mediante Telegram o la consola web frontend (`POST /message`).
-2. **Establecimiento de Conexiones MCP**: `TravelAgentOrchestrator` establece streams SSE simultáneos con los microservicios disponibles. Descubre dinámicamente las herramientas e instrumenta la traducción a clases tipadas **Pydantic V2**.
-3. **Poda Conversacional**: Antes de evaluar, se recupera el estado del checkpointer y se realiza una poda de turnos conversacionales completos si se excede el límite preestablecido para evitar el desborde del contexto.
-4. **Filtrado Selectivo del Historial**: El Router compila un historial limpio (`_get_clean_history`) excluyendo etiquetas y ToolMessages de bajo nivel para presentárselo en un formato nítido al Supervisor.
-5. **Orquestación y Enrutamiento Cognitivo**: El Supervisor LLM recibe el historial limpio y el mensaje entrante. Aplicando sus habilidades semánticas internas definidas en su Prompt del Sistema (Bilingual Keywords & Sticky Routing):
-   - *Ruta Semántica*: Determina y retorna una etiqueta estruturada (p. ej., `[ROUTE: finance]`).
-   - *Interacción Directa*: Si la consulta es charla informal (Smalltalk) o vaga sin historial previo, responde directamente al usuario.
-6. **Persistencia e Inyección de HumanMessage**: Si el Supervisor determina una ruta agéntica, el Router de forma inmediata e imperativa inyecta el `HumanMessage` del usuario en el checkpointer conversacional (`aupdate_state`). Esto preserva la consistencia de la línea de tiempo.
-7. **Ejecución del Especialista Modular**: Se inicializa el sub-agente especialista correspondiente (`finance`, `reminder`, `general`) inyectándole su respectivo set hermético de herramientas e instrucciones. El sub-agente ejecuta asíncronamente el function calling necesario comunicándose mediante SSE con su respectivo servidor MCP.
-8. **Consolidación de Memoria Segura**: La ejecución de los sub-agentes actualiza el checkpointer conversacional en SQLite de forma determinista usando el parámetro `as_node="model"` para erradicar cualquier error de colisión de esquemas.
-9. **Inferencia y Respuesta**: Se extrae la respuesta final generada por el sub-agente especialista y se transmite al cliente de presentación del usuario.
-
----
-
-## Consideraciones de Diseño y Clean Architecture
-
-- **Aislamiento Cognitivo (Anti-Fatiga de LLM)**: En lugar de inyectar 11 herramientas y 4 prompts de sistema en una sola llamada (lo que causa falsos disparos en modelos rápidos), la arquitectura de sub-agentes divide el dominio. Cada agente tiene un contexto sumamente acotado (2 o 3 herramientas máximo) garantizando una precisión del 100% en function calling.
-- **Enrutamiento Híbrido Avanzado**: Al combinar pre-checks de código estructurado de latencia cero con clasificación semántica mediante LLM, el sistema se siente instantáneo ante comandos explícitos del usuario y al mismo tiempo retiene capacidades conversacionales complejas.
-- **Persistencia Robusta de Hilos**: Al emplear un motor centralizado de checkpointer (`MemorySaver`) coordinado pero delegando la ejecución a sub-agentes compilados dinámicamente, se logra tener hilos de chat compartidos y con transaccionalidad sin riesgo de colisión de esquemas.
-- **Desacoplamiento Total de Capas**: Respetando rigurosamente Clean Architecture, la interfaz, el orquestador principal, los agentes especialistas y las herramientas sobre servidores remotos están totalmente separados físicamente y se comunican a través de contratos estrictos de red y validación tipada.
+2. **Capa de Seguridad Global (Input Guardrails)**: Valida la inyección de prompts y el idioma de entrada.
+3. **Descubrimiento MCP con Caché TTL**: Se consultan las herramientas de los servidores remotos empleando el caché temporal (TTL de 5 minutos).
+4. **Filtrado Selectivo del Historial y Poda**: El Router compila un historial de chat limpio y recorta el contexto de ser necesario.
+5. **Orquestación y Enrutamiento Cognitivo**: El Supervisor LLM clasifica el mensaje y determina la lista de destinos (`routes: list[str]`). Si es Smalltalk o requiere clarificación, responde directamente al usuario.
+6. **Ejecución Concurrente Especialista**: Por cada ruta devuelta, el orquestador invoca de forma paralela/concurrente a los sub-agentes especialistas correspondientes (`finance`, `reminder`, `general`, `recommender`) utilizando `asyncio.gather()`, acelerando los tiempos de respuesta hasta en un 3x antes de acumular sus respuestas en una sola.
+7. **Capa de Seguridad Global (Output Guardrails)**: Comprueba la integridad del texto compilado final antes de enviarlo.
+8. **Inferencia y Respuesta**: Guarda el mensaje consolidado y lo transmite al cliente.

@@ -1,6 +1,6 @@
 from langchain.agents import create_agent
 
-from .prompts import RECOMMENDER_SYSTEM_PROMPT
+from .prompts import get_recommender_system_prompt
 from .tools import get_recommender_tools
 
 
@@ -15,6 +15,6 @@ def create_recommender_agent(llm):
     return create_agent(
         llm,
         tools,
-        system_prompt=RECOMMENDER_SYSTEM_PROMPT,
+        system_prompt=get_recommender_system_prompt(),
         debug=False,
     )

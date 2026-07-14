@@ -16,7 +16,7 @@ flowchart TD
     orchestrator["TravelAgentOrchestrator\n(orchestrator.py)"]
 
     subgraph reminderLayer ["Capa de Recordatorios"]
-        guardrail["Guardrail de Seguridad\n(guardrails.py → guardrails_common.py)"]
+        guardrail["Guardrail Global\n(guardrails_input.py / guardrails_output.py)"]
         agent["Agente de Recordatorios\n(agent.py + prompts.py)"]
     end
 
@@ -47,8 +47,7 @@ flowchart TD
 | Archivo | Propósito |
 |---------|-----------|
 | `agent.py` | Función fábrica `create_reminder_agent(llm, tools)` que compila el agente LangGraph |
-| `prompts.py` | `get_reminder_system_prompt()` — construye el prompt de sistema específico de recordatorios, con resolución de fechas relativas |
-| `guardrails.py` | Wrapper del módulo común: `check_reminder_language(text)` y re-exportación de `check_prompt_injection` |
+| `prompts.py` | `get_reminder_system_prompt()` — construye el prompt de sistema dinámico con resolución de fechas relativas |
 | `reminder_skill.md` | Especificación técnica interna del skill del agente de recordatorios |
 
 ### Comportamiento del agente
@@ -61,9 +60,15 @@ flowchart TD
 
 1. **Selección de herramienta**: mapea directamente la intención del usuario a la herramienta MCP correcta (`record_reminder`, `query_reminders`, `modify_reminder`, `delete_reminder`).
 2. **Protección ante eliminaciones accidentales**: la directiva explícita `NEVER call 'delete_reminder' unless the user EXPLICITLY asks` evita que una consulta o listado genere una eliminación.
-3. **Salida estructurada en Markdown**: cuando los datos de la herramienta están disponibles, el agente renderiza un listado completo numerado con ID, título, fecha/hora y estado de cada recordatorio.
+3. **Salida contextual en Markdown**: el agente adapta su respuesta según la acción solicitada:
+   - Si el usuario **pide ver, listar o revisar** recordatorios: muestra el listado completo (ID, título, fecha/hora, estado, nota).
+   - Si el usuario **crea** un recordatorio: muestra **solo** la confirmación del recordatorio recién creado (ID, título, fecha/hora).
+   - Si el usuario **modifica** un recordatorio: muestra solo los detalles del recordatorio actualizado.
+   - Si el usuario **elimina** un recordatorio: muestra solo una confirmación con el ID eliminado.
+   - **NUNCA** lista todos los recordatorios automáticamente tras crear/modificar/eliminar.
 4. **Multilingüe**: responde siempre en el idioma del mensaje actual del usuario (inglés o español), sin importar el historial previo.
 5. **Resolución de fechas relativas**: el prompt inyecta la fecha y hora actuales y traduce expresiones relativas (p. ej. "mañana a las 9h", "el próximo martes", "en media hora") a fechas absolutas en formato `YYYY-MM-DD HH:MM` antes de llamar a las herramientas.
+6. **Aislamiento Multi-intent (NON-NEGOTIABLE)**: cuando el mensaje del usuario contiene solicitudes para otros agentes (gastos, packing, recomendaciones), el agente las ignora **silenciosamente**. No menciona, redirige ni comenta esas otras partes. Responde como si el usuario solo hubiera preguntado sobre recordatorios.
 
 ### Guardrail de seguridad
 

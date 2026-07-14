@@ -10,9 +10,9 @@ logger = logging.getLogger(__name__)
 
 
 class RoutingDecision(BaseModel):
-    route: Optional[str] = Field(
-        None,
-        description="The target sub-agent route: 'finance', 'reminder', 'general', or null for direct response/interaction."
+    routes: list[str] = Field(
+        default_factory=list,
+        description="The target sub-agent routes to trigger in order: 'finance', 'reminder', 'general', 'recommender'. Leave empty if direct response/interaction."
     )
     response: Optional[str] = Field(
         None,
@@ -20,10 +20,10 @@ class RoutingDecision(BaseModel):
     )
 
 
-async def run_supervisor(llm, history: list, message: str) -> tuple[Optional[str], str]:
+async def run_supervisor(llm, history: list, message: str) -> tuple[list[str], str]:
     """
     Invokes the Supervisor LLM with structured outputs to determine routing or direct conversation.
-    Returns a tuple (route, response_text).
+    Returns a tuple (routes, response_text).
     """
 
     supervisor_messages = [
@@ -55,27 +55,29 @@ async def run_supervisor(llm, history: list, message: str) -> tuple[Optional[str
     except Exception as e:
         logger.error("Error invoking Supervisor with structured outputs: %s", e, exc_info=True)
         # Safe fallback: treat as empty routing decision to default to supervisor chat or general
-        supervisor_response = RoutingDecision(route=None, response="Error interno de clasificación.")
+        supervisor_response = RoutingDecision(routes=[], response="Internal classification error. / Error interno de clasificación.")
 
-    route = None
+    routes = []
     supervisor_text = ""
 
     if supervisor_response:
-        route = supervisor_response.route
+        raw_routes = supervisor_response.routes or []
         supervisor_text = supervisor_response.response or ""
 
-        if isinstance(route, str):
-            route = route.lower().strip()
-            if route in ["", "none", "null"]:
-                route = None
+        for r in raw_routes:
+            if isinstance(r, str):
+                r = r.lower().strip()
+                if r in ["", "none", "null"]:
+                    continue
+                if r in ["rules", "logistics", "travel_search"]:
+                    logger.info(
+                        "Mapping detected alias '%s' by the LLM to the official 'general' route",
+                        r,
+                    )
+                    r = "general"
+                if r not in routes:
+                    routes.append(r)
 
-        if route and route in ["rules", "logistics"]:
-            logger.info(
-                "Mapping detected alias '%s' by the LLM to the official 'general' route",
-                route,
-            )
-            route = "general"
+    logger.info("Supervisor LLM responds - Routes: %s | Response: '%s'", routes, supervisor_text)
 
-    logger.info("Supervisor LLM responds - Route: '%s' | Response: '%s'", route, supervisor_text)
-
-    return route, supervisor_text
+    return routes, supervisor_text

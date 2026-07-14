@@ -25,6 +25,31 @@ class TelegramBotService:
         except Exception as e:
             logger.exception("Error responding to /start command in chat %s: %s", chat_id, e)
 
+    async def _send_message_in_chunks(self, update: Update, text: str):
+        # Telegram has a limit of 4096 characters. We use 4000 to be safe.
+        max_length = 4000
+        if len(text) <= max_length:
+            await update.message.reply_text(text)
+            return
+
+        chunks = []
+        while len(text) > max_length:
+            split_idx = text.rfind("\n", 0, max_length)
+            if split_idx == -1:
+                split_idx = text.rfind(" ", 0, max_length)
+            if split_idx == -1:
+                split_idx = max_length
+            
+            chunks.append(text[:split_idx].strip())
+            text = text[split_idx:].strip()
+        
+        if text:
+            chunks.append(text)
+
+        for chunk in chunks:
+            if chunk:
+                await update.message.reply_text(chunk)
+
     async def _handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_id = str(update.message.chat_id)
         try:
@@ -68,9 +93,9 @@ class TelegramBotService:
                         signature += f"\n🛠️ Flow: {tool_name}"
                         
                     reply = f"{reply}\n\n({signature})"
-                await update.message.reply_text(reply)
+                await self._send_message_in_chunks(update, reply)
             else:
-                await update.message.reply_text(str(response))
+                await self._send_message_in_chunks(update, str(response))
         except Exception as e:
             logger.exception("Error processing Telegram message from chat %s: %s", chat_id, e)
 
