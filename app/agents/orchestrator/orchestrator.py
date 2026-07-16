@@ -57,6 +57,10 @@ class TravelAgentOrchestrator:
     async def stop(self):
         await self.mcp_manager.stop()
 
+    def _save_long_term_memory_if_needed(self, thread_id: str, message: str) -> None:
+        """Delegate long-term memory detection and persistence to ChatMemoryService."""
+        ChatMemoryService.save_long_term_memory_if_needed(thread_id, message)
+
 
     @traceable(name="travel_assistant_handle_message")
     async def handle_message(
