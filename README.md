@@ -172,26 +172,46 @@ BRAVE_SEARCH_COUNT=5
 
 ---
 
-## 4. Estructura de datos persistentes
+## 4. Directorio de datos
 
-Todos los datos persistentes viven bajo `data/` (excluido de la imagen Docker):
+Todos los ficheros de datos persistentes (base de datos SQLite, índice vectorial ChromaDB) se almacenan bajo el directorio `data/` en la raíz del proyecto. Este directorio es ignorado por git (salvo `.gitkeep`) y se monta como volumen en Docker.
+
 ```
 data/
-└── travel_assistant.db    # SQLite: gastos, recordatorios, conversaciones, memorias de usuario
+├── .gitkeep                 ← rastreado en git para garantizar que el directorio existe
+└── travel_assistant.db      ← generado en runtime, ignorado por git
 ```
 
-El directorio `data/` se crea automáticamente al arrancar la aplicación. En Docker se monta como bind mount (`./data:/code/data`).
+> Si has estado usando versiones anteriores del proyecto con la base de datos en la raíz, muévela antes de arrancar:
+> ```bash
+> mv travel_assistant.db data/travel_assistant.db
+> ```
+
+---
 
 ## 5. Docker y arranque conjunto
-Se incluye `Dockerfile` y `docker-compose.yml` para lanzar los tres servicios en paralelo.
+
+Se incluye `Dockerfile` y `docker-compose.yml` para lanzar los tres servicios en paralelo. Los datos persistentes se gestionan mediante:
+
+- **Bind mount** `./data → /code/data`: comparte la base de datos SQLite entre el host y los contenedores.
+- **Named volume** `chromadb_data`: persiste el índice vectorial RAG entre reinicios sin necesidad de re-indexar los documentos PDF.
 
 ### Usar Docker Compose
 ```bash
-# Crear el directorio de datos antes del primer arranque
-mkdir -p data
-
+# Primer arranque (construye la imagen)
 docker compose up --build
+
+# Arranques posteriores (sin reconstruir)
+docker compose up
+
+# Parar sin borrar datos
+docker compose stop
+
+# Ver logs en tiempo real
+docker compose logs -f web
 ```
+
+> El directorio `data/` debe existir en el host antes del primer `docker compose up`. Al clonar el repositorio ya está creado gracias a `data/.gitkeep`.
 
 ---
 
