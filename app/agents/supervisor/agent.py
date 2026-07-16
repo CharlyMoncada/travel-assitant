@@ -22,8 +22,8 @@ class RoutingDecision(BaseModel):
 
 async def run_supervisor(llm, history: list, message: str) -> tuple[list[str], str]:
     """
-    Invokes the Supervisor LLM with structured outputs to determine routing or direct conversation.
-    Returns a tuple (routes, response_text).
+    Invoca el LLM Supervisor con salidas estructuradas para determinar el enrutamiento o la conversación directa.
+    Retorna una tupla (routes, response_text).
     """
 
     supervisor_messages = [
@@ -54,7 +54,7 @@ async def run_supervisor(llm, history: list, message: str) -> tuple[list[str], s
         supervisor_response = await structured_llm.ainvoke(supervisor_messages)
     except Exception as e:
         logger.error("Error invoking Supervisor with structured outputs: %s", e, exc_info=True)
-        # Safe fallback: treat as empty routing decision to default to supervisor chat or general
+        # Fallback seguro: tratar como decisión de enrutamiento vacía para usar supervisor o agente general
         supervisor_response = RoutingDecision(routes=[], response="Internal classification error. / Error interno de clasificación.")
 
     routes = []

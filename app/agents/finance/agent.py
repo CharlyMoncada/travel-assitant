@@ -3,7 +3,7 @@ from .prompts import get_finance_system_prompt
 
 def create_finance_agent(llm, tools: list):
     """
-    Creates and compiles the sub-agent specialized in Finance and Expenses.
+    Crea y compila el subagente especializado en Finanzas y Gastos.
     """
     return create_agent(
         llm,

@@ -1,19 +1,19 @@
 """
-Input guardrail — hybrid approach: fast regex pre-filter + LLM semantic classifier.
+Guardarraíl de entrada — enfoque híbrido: prefiltro regex rápido + clasificador semántico LLM.
 
-Architecture:
-  1. Regex pre-filter (< 1 ms, no API cost): catches unambiguous, high-confidence
-     attack patterns (template tokens, DAN, known jailbreak strings).
-  2. LLM classifier (gpt-4o-mini, one structured call): detects language validity
-     and semantic prompt-injection attacks that regex cannot express
-     (hypothetical bypasses, roleplay jailbreaks, many-shot conditioning, etc.).
+Arquitectura:
+  1. Prefiltro regex (< 1 ms, sin coste de API): captura patrones de ataque
+     inequívocos y de alta confianza (tokens de plantilla, DAN, cadenas conocidas de jailbreak).
+  2. Clasificador LLM (gpt-4o-mini, una llamada estructurada): detecta validez del idioma
+     y ataques semánticos de inyección de prompt que el regex no puede expresar
+     (evasiones hipotéticas, jailbreaks de roleplay, condicionamiento many-shot, etc.).
 
-Rationale for the hybrid design:
-- Pure regex: inflexible — cannot understand paraphrased or contextual attacks.
-- Pure LLM: ~300 ms latency + API cost on EVERY message, including trivial ones;
-  fails completely if the API is unavailable.
-- Hybrid: deterministic fast-path for obvious patterns + semantic understanding for
-  everything else. Gracefully degrades (allow-through) on API errors.
+Justificación del diseño híbrido:
+- Regex puro: inflexible — no puede entender ataques parafraseados o contextuales.
+- LLM puro: ~300 ms de latencia + coste de API en CADA mensaje, incluyendo los triviales;
+  falla completamente si la API no está disponible.
+- Híbrido: ruta determinista rápida para patrones obvios + comprensión semántica para
+  todo lo demás. Degrada con gracia (permite el paso) ante errores de API.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from app.services.llm import get_openai_model
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Public rejection messages (bilingual)
+# Mensajes de rechazo públicos (bilingüe)
 # ---------------------------------------------------------------------------
 
 REJECTION_MESSAGE_LANGUAGE = (
@@ -44,31 +44,31 @@ REJECTION_MESSAGE_INJECTION = (
 )
 
 # ---------------------------------------------------------------------------
-# Stage 1 — Regex pre-filter
-# Fast, zero-cost, zero-latency check for unambiguous attack signatures.
-# Kept intentionally small: only patterns with near-zero false-positive risk.
+# Etapa 1 — Prefiltro regex
+# Verificación rápida, sin coste y sin latencia para firmas de ataque inequívocas.
+# Mantenido intencionalmente pequeño: solo patrones con riesgo de falso positivo casi nulo.
 # ---------------------------------------------------------------------------
 
 _OBVIOUS_PATTERNS: list[tuple[str, re.Pattern]] = [
-    # LLM template token injection (only appears in adversarial context)
+    # Inyección de token de plantilla LLM (solo aparece en contexto adversario)
     ("template_tokens",
      re.compile(
          r"(\[INST\]|<<SYS>>|<</SYS>>|<\|system\|>|<\|user\|>|\[SYSTEM\])",
          re.IGNORECASE,
      )),
-    # DAN / unrestricted-mode jailbreak keywords
+    # Palabras clave de jailbreak DAN / modo sin restricciones
     ("dan_jailbreak",
      re.compile(
          r"\b(DAN|jailbreak|do\s+anything\s+now|unrestricted\s+mode)\b",
          re.IGNORECASE,
      )),
-    # Privilege escalation markers
+    # Marcadores de escalada de privilegios
     ("privilege_escalation",
      re.compile(
          r"\b(developer\s+mode|god\s+mode|admin\s+mode|sudo\s+mode)\b",
          re.IGNORECASE,
      )),
-    # Base64 / eval obfuscation
+    # Ofuscación Base64 / eval
     ("obfuscation",
      re.compile(
          r"\b(base64\s+decode|decodifica\s+esto|eval\s*\(|exec\s*\()\b",
@@ -79,8 +79,8 @@ _OBVIOUS_PATTERNS: list[tuple[str, re.Pattern]] = [
 
 def _check_obvious_patterns(text: str) -> tuple[bool, str | None]:
     """
-    Returns (is_safe, pattern_name).
-    is_safe=False means the message was caught by the pre-filter.
+    Retorna (is_safe, pattern_name).
+    is_safe=False significa que el mensaje fue capturado por el prefiltro.
     """
     for name, pattern in _OBVIOUS_PATTERNS:
         if pattern.search(text):
@@ -93,7 +93,7 @@ def _check_obvious_patterns(text: str) -> tuple[bool, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 — LLM semantic classifier
+# Etapa 2 — Clasificador semántico LLM
 # ---------------------------------------------------------------------------
 
 _GUARDRAIL_SYSTEM_PROMPT = """\
@@ -138,25 +138,25 @@ class GuardrailDecision(BaseModel):
 
 async def check_input_guardrail(text: str) -> tuple[bool, bool, str | None]:
     """
-    Full hybrid guardrail check.
+    Verificación completa del guardarraíl híbrido.
 
-    Returns:
+    Retorna:
         (lang_ok, is_safe, block_reason)
-        - lang_ok: False if the message is in an unsupported language.
-        - is_safe: False if a prompt injection is detected.
-        - block_reason: human-readable reason string, or None if everything is fine.
+        - lang_ok: False si el mensaje está en un idioma no admitido.
+        - is_safe: False si se detecta una inyección de prompt.
+        - block_reason: cadena de texto legible explicando el bloqueo, o None si todo está bien.
 
-    Flow:
-        1. Regex pre-filter (instant, no API call).
-        2. LLM semantic classifier (async, structured output).
-        3. On LLM API error: log warning and allow the message through (fail-open).
+    Flujo:
+        1. Prefiltro regex (instantáneo, sin llamada a la API).
+        2. Clasificador semántico LLM (asíncrono, salida estructurada).
+        3. En caso de error de API del LLM: registrar advertencia y permitir el paso (fail-open).
     """
-    # Stage 1 — regex pre-filter
+    # Etapa 1 — prefiltro regex
     is_safe_regex, matched = _check_obvious_patterns(text)
     if not is_safe_regex:
-        return True, False, matched  # lang assumed OK, injection blocked
+        return True, False, matched  # idioma asumido OK, inyección bloqueada
 
-    # Stage 2 — LLM semantic check
+    # Etapa 2 — verificación semántica LLM
     try:
         llm = ChatOpenAI(model=get_openai_model(), temperature=0.0)
         structured_llm = llm.with_structured_output(GuardrailDecision)
@@ -182,8 +182,8 @@ async def check_input_guardrail(text: str) -> tuple[bool, bool, str | None]:
         return True, True, None
 
     except Exception as exc:
-        # Fail-open: if the LLM is unavailable, log and allow the message through.
-        # This ensures the assistant remains usable even if the guardrail API is down.
+        # Fail-open: si el LLM no está disponible, registrar y permitir el paso del mensaje.
+        # Esto garantiza que el asistente siga siendo usable aunque la API del guardarraíl no esté disponible.
         logger.warning(
             "LLM guardrail API error — failing open (message allowed): %s", exc
         )

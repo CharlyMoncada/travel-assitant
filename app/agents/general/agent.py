@@ -4,7 +4,7 @@ from .tools import get_general_tools
 
 def create_general_agent(llm):
     """
-    Creates and compiles the sub-agent specialized in Regulations and Logistics.
+    Crea y compila el subagente especializado en Normativas y Logística.
     """
     tools = get_general_tools()
     return create_agent(

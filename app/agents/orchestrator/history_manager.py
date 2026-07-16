@@ -64,22 +64,22 @@ class ChatMemoryService:
     @staticmethod
     def detect_memory_to_save(message: str) -> tuple[str, str, str] | None:
         """
-        Detects simple long-term travel preferences from declarative user messages.
-        Returns (memory_key, memory_value, category) or None.
+        Detecta preferencias de viaje a largo plazo simples a partir de mensajes declarativos del usuario.
+        Retorna (memory_key, memory_value, category) o None.
         """
         clean_message = message.strip()
         lower_message = clean_message.lower()
 
-        # Do not save questions as memories
+        # No guardar preguntas como memorias
         question_markers = ["?", "¿", "cual", "cuál", "que ", "qué ", "como ", "cómo ", "what ", "how ", "where ", "which ", "who "]
         if any(marker in lower_message for marker in question_markers):
             return None
 
-        # Spanish heuristics
+        # Heurísticas en español
         if "mi aeropuerto favorito" in lower_message and " es " in lower_message:
             value = clean_message.split(" es ", 1)[1].strip().rstrip(".")
             return ("favorite_airport", value, "travel_preference")
-        # English heuristics
+        # Heurísticas en inglés
         if "my favorite airport" in lower_message and " is " in lower_message:
             value = clean_message.split(" is ", 1)[1].strip().rstrip(".")
             return ("favorite_airport", value, "travel_preference")

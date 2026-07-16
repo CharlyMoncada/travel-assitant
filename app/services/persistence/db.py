@@ -8,7 +8,7 @@ DATA_DIR = BASE_DIR / "data"
 DB_PATH = DATA_DIR / "travel_assistant.db"
 DATABASE_URL = f"sqlite:///{DB_PATH.as_posix()}"
 
-# If the expected SQLite path exists as a directory, handle it gracefully.
+# Si la ruta SQLite esperada existe como directorio, manejarlo con gracia.
 if DB_PATH.exists() and DB_PATH.is_dir():
     if any(DB_PATH.iterdir()):
         raise RuntimeError(

@@ -41,15 +41,15 @@ def _get_openai_client():
 
 
 def compose_rag_answer(query: str, documents: list, metadatas: list) -> str:
-    """Compose answer using LLM based on retrieved RAG documents.
-    
+    """Compone una respuesta usando el LLM a partir de los documentos RAG recuperados.
+
     Args:
-        query: User question/query
-        documents: List of document text from RAG retrieval
-        metadatas: List of metadata dicts for each document
-        
+        query: Pregunta/consulta del usuario
+        documents: Lista de textos de documentos recuperados por RAG
+        metadatas: Lista de dicts de metadatos para cada documento
+
     Returns:
-        Formatted answer with sources, with fallback to simple composition if LLM unavailable.
+        Respuesta formateada con fuentes, con fallback a composición simple si el LLM no está disponible.
     """
     if not is_available():
         return _fallback_compose_answer(query, documents, metadatas)
@@ -91,7 +91,7 @@ def compose_rag_answer(query: str, documents: list, metadatas: list) -> str:
 
 
 def _fallback_compose_answer(query: str, documents: list, metadatas: list) -> str:
-    """Fallback simple composition when LLM is unavailable."""
+    """Composición simple de fallback cuando el LLM no está disponible."""
     summary = " ".join(documents)
     sources = ", ".join(m.get("source", "unknown") for m in metadatas if m)
     return (

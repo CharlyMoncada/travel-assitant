@@ -1,23 +1,23 @@
 """
-Output guardrail — hybrid approach: fast regex pre-filter + LLM semantic inspector.
+Guardarraíl de salida — enfoque híbrido: prefiltro regex rápido + inspector semántico LLM.
 
-Architecture mirrors the input guardrail:
-  1. Regex pre-filter (< 1 ms, no API cost): catches unambiguous, high-confidence
-     information leaks — Python tracebacks, known API key formats, template tokens,
-     literal system-prompt markers, tool-call markup.
-  2. LLM inspector (gpt-4o-mini, one structured call): detects subtle / indirect
-     leaks that regex cannot express — obfuscated or partial secrets, paraphrased
-     system-prompt fragments, inadvertent PII from other sessions, code or
-     implementation details embedded in the response.
+La arquitectura refleja la del guardarraíl de entrada:
+  1. Prefiltro regex (< 1 ms, sin coste de API): captura fugas de información
+     inequívocas y de alta confianza — trazas de Python, formatos conocidos de claves de API,
+     tokens de plantilla, marcadores literales de prompt del sistema, marcado de llamadas a herramientas.
+  2. Inspector LLM (gpt-4o-mini, una llamada estructurada): detecta fugas sutiles o indirectas
+     que el regex no puede expresar — secretos ofuscados o parciales, fragmentos parafraseados
+     del prompt del sistema, PII involuntario de otras sesiones, código o
+     detalles de implementación incrustados en la respuesta.
 
-Rationale for the hybrid design:
-- Pure regex: excellent for technical signatures but blind to semantic/indirect
-  leakage ("my key begins with sk-...").
-- Pure LLM: adds ~300 ms latency on every response + API cost; overkill for the
-  majority of responses that are trivially clean.
-- Hybrid: deterministic fast-path eliminates most cases instantly; LLM handles
-  the nuanced ones. Fails-open (allow through) on API errors to preserve
-  availability — the same policy as the input guardrail.
+Justificación del diseño híbrido:
+- Regex puro: excelente para firmas técnicas pero ciego ante fugas semánticas/indirectas
+  ("mi clave empieza por sk-...").
+- LLM puro: añade ~300 ms de latencia en cada respuesta + coste de API; excesivo para la
+  mayoría de respuestas que son trivialmente limpias.
+- Híbrido: la ruta determinista rápida elimina la mayoría de casos al instante; el LLM gestiona
+  los matizados. Falla de forma abierta (permite el paso) ante errores de API para preservar
+  la disponibilidad — la misma política que el guardarraíl de entrada.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from app.services.llm import get_openai_model
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Public rejection messages
+# Mensajes de rechazo públicos
 # ---------------------------------------------------------------------------
 
 REJECTION_MESSAGE_OUTPUT_LEAK = (
@@ -46,18 +46,18 @@ REJECTION_MESSAGE_OUTPUT_ERROR = (
 )
 
 # ---------------------------------------------------------------------------
-# Stage 1 — Regex pre-filter
-# High-confidence, unambiguous output leak signatures.
+# Etapa 1 — Prefiltro regex
+# Firmas de fuga de salida inequívocas y de alta confianza.
 # ---------------------------------------------------------------------------
 
 _OUTPUT_PATTERNS: list[tuple[str, re.Pattern]] = [
-    # LLM template tokens in the response
+    # Tokens de plantilla LLM en la respuesta
     ("template_token_leak",
      re.compile(
          r"(\[INST\]|<<SYS>>|<</SYS>>|<\|system\|>|<\|user\|>|\[SYSTEM\]|###\s*(system|instruction))",
          re.IGNORECASE,
      )),
-    # Raw Python tracebacks and common exception types
+    # Trazas de Python brutas y tipos de excepción comunes
     ("raw_error_leak",
      re.compile(
          r"(Traceback\s+\(most\s+recent\s+call\s+last\):"
@@ -65,7 +65,7 @@ _OUTPUT_PATTERNS: list[tuple[str, re.Pattern]] = [
          r"|ValueError:|KeyError:|ImportError:|RuntimeError:)",
          re.IGNORECASE,
      )),
-    # Literal system-prompt markers from the agents
+    # Marcadores literales de prompt del sistema de los agentes
     ("instruction_leak",
      re.compile(
          r"(CRITICAL BEHAVIOR RULES|MANDATORY tool for answering|Strict RAG answer generator"
@@ -74,14 +74,14 @@ _OUTPUT_PATTERNS: list[tuple[str, re.Pattern]] = [
          r"|You are the Intelligent Supervisor)",
          re.IGNORECASE,
      )),
-    # API key / secret token patterns
+    # Patrones de clave de API / token secreto
     ("secret_leak",
      re.compile(
          r"(sk-[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9\-_\.]{20,}"
          r"|OPENAI_API_KEY\s*=|BRAVE_API_KEY\s*=|TELEGRAM_BOT_TOKEN\s*=)",
          re.IGNORECASE,
      )),
-    # Internal tool/function call markup
+    # Marcado interno de llamadas a herramientas/funciones
     ("tool_call_leak",
      re.compile(
          r"(<tool_call>|<function_call>|<\|tool_call\|>|\{\"tool_name\"\s*:|\"function\"\s*:\s*\"[a-z_]+\")",
@@ -92,8 +92,8 @@ _OUTPUT_PATTERNS: list[tuple[str, re.Pattern]] = [
 
 def _check_output_patterns(text: str) -> tuple[bool, str | None]:
     """
-    Returns (is_clean, leak_type).
-    is_clean=False means the pre-filter caught a leak.
+    Retorna (is_clean, leak_type).
+    is_clean=False significa que el prefiltro detectó una fuga.
     """
     for name, pattern in _OUTPUT_PATTERNS:
         if pattern.search(text):
@@ -106,7 +106,7 @@ def _check_output_patterns(text: str) -> tuple[bool, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# Stage 2 — LLM semantic inspector
+# Etapa 2 — Inspector semántico LLM
 # ---------------------------------------------------------------------------
 
 _OUTPUT_INSPECTOR_SYSTEM_PROMPT = """\
@@ -157,24 +157,24 @@ class OutputIntegrityDecision(BaseModel):
 
 async def check_output_integrity(text: str) -> tuple[bool, str | None]:
     """
-    Full hybrid output integrity check.
+    Verificación completa de integridad de salida híbrida.
 
-    Returns:
+    Retorna:
         (is_clean, leak_type)
-        - is_clean: False if a leak was detected.
-        - leak_type: string identifying the type of leak, or None if clean.
+        - is_clean: False si se detectó una fuga.
+        - leak_type: cadena que identifica el tipo de fuga, o None si está limpio.
 
-    Flow:
-        1. Regex pre-filter (instant, no API call).
-        2. LLM semantic inspector (async, structured output).
-        3. On LLM API error: log warning and allow the response through (fail-open).
+    Flujo:
+        1. Prefiltro regex (instantáneo, sin llamada a la API).
+        2. Inspector semántico LLM (asíncrono, salida estructurada).
+        3. En caso de error de API del LLM: registrar advertencia y permitir la respuesta (fail-open).
     """
-    # Stage 1 — regex pre-filter
+    # Etapa 1 — prefiltro regex
     is_clean_regex, regex_leak_type = _check_output_patterns(text)
     if not is_clean_regex:
         return False, regex_leak_type
 
-    # Stage 2 — LLM semantic inspection
+    # Etapa 2 — inspección semántica LLM
     try:
         llm = ChatOpenAI(model=get_openai_model(), temperature=0.0)
         structured_llm = llm.with_structured_output(OutputIntegrityDecision)
