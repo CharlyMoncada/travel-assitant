@@ -18,8 +18,10 @@ python -m unittest discover -s scratch -p "test_suite.py" -v
 Ejecutar solo una clase:
 
 ```bash
-python -m unittest scratch.test_suite.TestBraveSearch -v
-python -m unittest scratch.test_suite.TestTravelSearchTool -v
+python -m unittest scratch.test_suite.TestRAGTextProcessing -v
+python -m unittest scratch.test_suite.TestRAGQueryLogic -v
+python -m unittest scratch.test_suite.TestRAGPDFExtraction -v
+python -m unittest scratch.test_suite.TestRAGStatus -v
 ```
 
 ---
@@ -182,39 +184,90 @@ python -m unittest scratch.test_suite.TestTravelSearchTool -v
 
 ---
 
-### 13. `TestBraveSearch` _(rama: `tests_brave`)_
-**Módulo:** `app.services.brave_search`
+### 13. `TestRAGTextProcessing` _(rama: `tests_rag`)_
+**Módulo:** funciones puras de `app.services.rag` — sin ChromaDB, sin embeddings, sin LLM
 
 | Test | Qué verifica |
 |------|--------------|
-| `test_is_brave_available_false_when_no_key` | Sin API key → `is_brave_available()` devuelve `False` |
-| `test_is_brave_available_true_when_key_present` | Con API key → `True` |
-| `test_no_api_key_returns_error_dict` | Sin key → dict con `"error"`, `results: []` y `query` correcto |
-| `test_successful_search_returns_structured_result` | HTTP OK → `{query, results[{title,url,description}], total}` |
-| `test_successful_search_empty_web_results` | API responde OK sin resultados → lista vacía, sin crash |
-| `test_timeout_returns_error_dict` | `httpx.TimeoutException` → dict con `"error"` conteniendo "timed out" |
-| `test_http_401_returns_error_dict` | HTTP 401 → dict con `"error"` conteniendo "401" |
-| `test_http_429_returns_error_dict` | HTTP 429 → dict con `"error"` conteniendo "429" |
-| `test_format_search_results_for_llm_returns_valid_json` | Salida es JSON parseable con campos correctos |
-| `test_format_search_results_for_llm_with_error_dict` | Dict de error también se serializa correctamente |
-| `test_format_search_results_preserves_non_ascii` | Caracteres no-ASCII (ej: "España") se preservan (`ensure_ascii=False`) |
+| `test_normalize_strips_leading_trailing_whitespace` | Elimina espacios al inicio y final |
+| `test_normalize_replaces_cr_with_newline` | `\r\n` → `\n` |
+| `test_normalize_removes_soft_hyphen_at_line_end` | `-\n` (guion suave) → palabras se unen |
+| `test_normalize_collapses_multiple_spaces` | Múltiples espacios → uno |
+| `test_normalize_collapses_excess_blank_lines` | Más de 2 líneas en blanco → 2 |
+| `test_normalize_empty_string_returns_empty` | `""` → `""` |
+| `test_normalize_null_bytes_replaced` | `\x00` → espacio |
+| `test_remove_noise_strips_urls` | URLs `https://` eliminadas |
+| `test_remove_noise_strips_date_patterns` | Fechas `1/6/2024, 10:30 AM` eliminadas |
+| `test_remove_noise_strips_your_europe_phrase` | Frase "Your Europe" eliminada |
+| `test_remove_noise_strips_menu_keyword` | "MENÚ" eliminado |
+| `test_remove_noise_preserves_meaningful_content` | Contenido real ("pasaporte válido") se conserva |
+| `test_chunk_empty_string_returns_empty_list` | `""` → `[]` |
+| `test_chunk_short_text_returns_single_chunk` | Texto corto → 1 chunk |
+| `test_chunk_long_text_creates_multiple_chunks` | Texto > 900 chars → varios chunks |
+| `test_chunk_no_duplicates` | Chunks resultantes son únicos |
+| `test_chunk_all_content_covered` | Todos los chunks son no vacíos |
+| `test_chunk_paragraph_boundaries_respected` | Párrafos cortos separados quedan en distintos chunks |
+| `test_content_hash_returns_hex_string` | SHA-1 → 40 caracteres hexadecimales |
+| `test_content_hash_same_input_same_output` | Determinismo: mismo input → mismo hash |
+| `test_content_hash_different_inputs_differ` | Inputs distintos → hashes distintos |
+| `test_last_words_returns_last_n` | Devuelve últimas N palabras |
+| `test_last_words_shorter_than_n` | Texto más corto que N → todo el texto |
+| `test_last_words_empty_string` | `""` → `""` |
 
-**Resultado al ejecutar:** `Ran 11 tests in 0.050s — OK`
+**Resultado:** `Ran 24 tests — OK`
 
 ---
 
-### 14. `TestTravelSearchTool` _(rama: `tests_brave`)_
-**Módulo:** `app.agents.general.tools.make_travel_search_coroutine`
+### 14. `TestRAGQueryLogic` _(rama: `tests_rag`)_
+**Módulo:** `app.services.rag.query_normative_documents` (ChromaDB y LLM mockeados)
 
 | Test | Qué verifica |
 |------|--------------|
-| `test_short_query_appends_travel_keyword` | Query de 2 palabras → se añade `" travel"` antes de llamar a Brave |
-| `test_query_of_three_words_appends_travel` | Query de exactamente 3 palabras → también añade `" travel"` |
-| `test_long_query_not_modified` | Query de 5+ palabras → se pasa sin modificar |
-| `test_no_api_key_returns_warning_json` | Sin Brave disponible → JSON con `"warning"` y `results: []` sin crash |
-| `test_brave_exception_returns_error_json` | Excepción inesperada en Brave → JSON con `"error"`, sin propagarse |
+| `test_empty_query_returns_specific_message` | Query vacía → mensaje "La consulta está vacía." |
+| `test_whitespace_only_query_returns_specific_message` | Query solo espacios → mismo mensaje |
+| `test_no_close_results_returns_european_fallback_spanish` | Distancias > umbral + idioma ES → fallback europeo en español |
+| `test_no_close_results_returns_european_fallback_english` | Distancias > umbral + idioma EN → fallback europeo en inglés |
+| `test_good_results_calls_compose_rag_answer` | Distancias < umbral → `compose_rag_answer` se llama y su respuesta se devuelve |
+| `test_good_results_sources_contain_score` | Cada fuente tiene campo `score` = `1 - distance` |
+| `test_results_filtered_by_max_distance` | Chunks con distancia > MAX_DISTANCE se excluyen de `sources` |
 
-**Resultado al ejecutar:** `Ran 5 tests in 0.010s — OK`
+**Resultado:** `Ran 7 tests — OK`
+
+---
+
+### 15. `TestRAGPDFExtraction` _(rama: `tests_rag`)_
+**Módulo:** `app.services.rag._build_chunks_from_pdf_file` / `_build_chunks_from_text_file`  
+Tests de integración con los ficheros reales de `rag_docs/`. Solo usa `pdfplumber` — sin ChromaDB ni embeddings.
+
+| Test | Qué verifica |
+|------|--------------|
+| `test_txt_visa_produces_chunks` | `visa.txt` genera al menos 1 chunk |
+| `test_txt_seguridad_chunk_has_expected_metadata` | Chunks de `seguridad.txt` tienen `type="text"` y source correcto |
+| `test_txt_chunks_have_unique_ids` | IDs de chunks de TXT son únicos |
+| `test_pdf_ciudadanos_ue_produces_chunks` | PDF "ciudadanos de la UE" genera al menos 1 chunk |
+| `test_pdf_chunks_are_non_empty_strings` | Todos los chunks son strings no vacíos |
+| `test_pdf_chunks_have_page_metadata` | Cada chunk tiene `page > 0` en metadata |
+| `test_pdf_chunks_have_unique_ids` | IDs de chunks de PDF son únicos |
+| `test_pdf_pasaportes_produces_chunks` | PDF de pasaportes genera chunks |
+| `test_pdf_menores_produces_chunks` | PDF de menores genera chunks |
+| `test_pdf_content_contains_travel_keywords` | Texto extraído contiene palabras clave de viaje |
+| `test_pdf_chunk_size_within_bounds` | Ningún chunk supera `CHUNK_SIZE × 1.1` caracteres |
+
+**Resultado:** `Ran 11 tests — OK`
+
+---
+
+### 16. `TestRAGStatus` _(rama: `tests_rag`)_
+**Módulo:** `app.services.rag.rag_status`
+
+| Test | Qué verifica |
+|------|--------------|
+| `test_rag_status_returns_all_expected_keys` | Devuelve exactamente los 8 campos esperados |
+| `test_rag_status_document_count_matches_collection` | `document_count` coincide con `collection.count()` |
+| `test_rag_status_collection_count_error_returns_none` | Si `count()` lanza excepción → `document_count` es `None`, sin crash |
+| `test_rag_status_collection_name_correct` | `collection_name` coincide con la constante `COLLECTION_NAME` |
+
+**Resultado:** `Ran 4 tests — OK`
 
 ---
 
@@ -231,5 +284,7 @@ python -m unittest scratch.test_suite.TestTravelSearchTool -v
 | Directivas de agente | 1 | 7 |
 | Concurrencia del orquestador | 1 | 1 |
 | Poda de historial | 1 | 1 |
-| **Brave Search + travel_search tool** | **2** | **16** |
-| **TOTAL** | **14** | **84** |
+| **RAG (texto puro + query logic + PDFs + status)** | **4** | **46** |
+| **TOTAL** | **16** | **114** |
+
+> **Nota:** Las clases `TestBraveSearch` y `TestTravelSearchTool` (16 tests adicionales) están en la rama `tests_brave` y se sumarán al fusionar con main, llevando el total a **18 clases y 130 tests**.
