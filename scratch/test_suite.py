@@ -901,5 +901,1491 @@ class TestOutputIntegrityGuardrailExtended(unittest.TestCase):
         self.assertEqual(reason, "tool_call_leak")
 
 
+class TestRecommenderPrompt(unittest.TestCase):
+    """Tests for the recommender system prompt — content and no-clarifying-questions policy."""
+
+    def setUp(self):
+        from app.agents.recommender.prompts import get_recommender_system_prompt
+        self.prompt = get_recommender_system_prompt()
+
+    def test_prompt_contains_tools_section(self):
+        self.assertIn("TOOLS", self.prompt)
+
+    def test_prompt_contains_output_format_section(self):
+        self.assertIn("OUTPUT FORMAT", self.prompt)
+
+    def test_prompt_contains_classification_rules_section(self):
+        self.assertIn("CLASSIFICATION RULES", self.prompt)
+
+    def test_prompt_prohibits_clarifying_questions(self):
+        """The prompt must explicitly forbid asking the user for clarification."""
+        lower = self.prompt.lower()
+        self.assertTrue(
+            "never ask" in lower or "do not ask" in lower or "no preguntes" in lower,
+            "Prompt must contain a directive prohibiting clarifying questions",
+        )
+
+    def test_prompt_instructs_to_infer_destination_type(self):
+        """Prompt must tell the agent to infer beach/mountain/urban from weather."""
+        lower = self.prompt.lower()
+        self.assertIn("infer", lower)
+
+    def test_prompt_mentions_emoji_categories(self):
+        """Verify the new visual category markers are present."""
+        self.assertIn("✅", self.prompt)
+        self.assertIn("🟡", self.prompt)
+        self.assertIn("❌", self.prompt)
+
+    def test_prompt_includes_current_date(self):
+        import datetime
+        today = datetime.date.today().isoformat()
+        self.assertIn(today, self.prompt)
+
+
+class TestRecommenderPackingItems(unittest.TestCase):
+    """Tests for get_packing_items tool — including the enriched CSV."""
+
+    def test_csv_contains_beach_items(self):
+        """The enriched CSV must include beach-specific items."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        items = []
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    items.append(row[0].strip().lower())
+        beach_keywords = ["bañador", "traje de baño", "chanclas", "playa", "protector solar"]
+        found = any(any(kw in item for kw in beach_keywords) for item in items)
+        self.assertTrue(found, f"No beach items found in CSV. Items: {items}")
+
+    def test_csv_contains_mountain_or_cold_items(self):
+        """The enriched CSV must include cold/mountain-specific items."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        items = []
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    items.append(row[0].strip().lower())
+        cold_keywords = ["térmico", "polar", "montaña", "senderismo", "guantes", "bufanda", "gorro"]
+        found = any(any(kw in item for kw in cold_keywords) for item in items)
+        self.assertTrue(found, f"No cold/mountain items found in CSV. Items: {items}")
+
+    def test_csv_contains_rain_items(self):
+        """The enriched CSV must include rain protection items."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        items = []
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    items.append(row[0].strip().lower())
+        rain_keywords = ["chubasquero", "impermeable", "paraguas"]
+        found = any(any(kw in item for kw in rain_keywords) for item in items)
+        self.assertTrue(found, f"No rain items found in CSV. Items: {items}")
+
+    def test_csv_has_at_least_forty_items(self):
+        """The enriched CSV should have ≥ 40 items for meaningful classification."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        count = 0
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    count += 1
+        self.assertGreaterEqual(count, 40, f"CSV only has {count} items, expected ≥ 40")
+
+    def test_get_packing_items_tool_returns_all_items(self):
+        """The get_packing_items coroutine should return all enriched items."""
+        import asyncio
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+        import json
+        coroutine_fn = make_get_packing_items_coroutine()
+        result = asyncio.run(coroutine_fn())
+        data = json.loads(result)
+        self.assertIn("items", data)
+        self.assertGreaterEqual(data["total"], 40)
+
+
+class TestDetectMemoryToSave(unittest.TestCase):
+    """Unit tests for ChatMemoryService.detect_memory_to_save — pure logic, no DB."""
+
+    def setUp(self):
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+        self.detect = ChatMemoryService.detect_memory_to_save
+
+    # --------------------------------------------------------------------- #
+    # Travel preferences detected correctly                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_detects_favorite_airport_spanish(self):
+        result = self.detect("Mi aeropuerto favorito es el Adolfo Suárez")
+        self.assertIsNotNone(result)
+        key, value, category = result
+        self.assertEqual(key, "favorite_airport")
+        self.assertIn("Adolfo", value)
+        self.assertEqual(category, "travel_preference")
+
+    def test_detects_favorite_airport_english(self):
+        result = self.detect("My favorite airport is JFK")
+        self.assertIsNotNone(result)
+        key, value, category = result
+        self.assertEqual(key, "favorite_airport")
+        self.assertEqual(value, "JFK")
+
+    def test_detects_budget_spanish(self):
+        result = self.detect("Mi presupuesto es 500 euros")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "budget_preference")
+        self.assertIn("500", value)
+
+    def test_detects_budget_english(self):
+        result = self.detect("My budget is 1000 dollars")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "budget_preference")
+        self.assertIn("1000", value)
+
+    def test_detects_travel_style_spanish(self):
+        result = self.detect("Prefiero viajar en temporada baja")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "travel_style")
+        self.assertIn("temporada baja", value)
+
+    def test_detects_travel_style_english_prefer_to(self):
+        result = self.detect("I prefer to travel by train")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "travel_style")
+        self.assertIn("by train", value)
+
+    def test_detects_travel_style_english_prefer_traveling(self):
+        result = self.detect("I prefer traveling in business class")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "travel_style")
+        self.assertIn("in business class", value)
+
+    # --------------------------------------------------------------------- #
+    # Questions must NOT be stored                                            #
+    # --------------------------------------------------------------------- #
+
+    def test_question_with_interrogation_not_saved(self):
+        self.assertIsNone(self.detect("¿Cuál es mi presupuesto?"))
+
+    def test_question_with_what_not_saved(self):
+        self.assertIsNone(self.detect("What is my favorite airport?"))
+
+    def test_generic_message_returns_none(self):
+        self.assertIsNone(self.detect("Quiero ir a París en julio"))
+
+
+class TestMemoryPersistence(unittest.TestCase):
+    """Integration tests for save_user_memory / get_user_memories / format_user_memories
+    using a temporary in-memory SQLite database."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS user_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            memory_key TEXT NOT NULL,
+            memory_value TEXT NOT NULL,
+            category TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            UNIQUE(thread_id, memory_key)
+        );
+    """
+
+    def setUp(self):
+        import sqlite3, tempfile, os
+        import app.services.persistence.memory_persistence as mem_mod
+
+        # Temp file for an isolated SQLite DB
+        self._fd, self._tmp_path = tempfile.mkstemp(suffix=".db")
+        os.close(self._fd)
+
+        # Initialise schema
+        with sqlite3.connect(self._tmp_path) as conn:
+            conn.executescript(self._SCHEMA)
+
+        # Patch DB_PATH so the module uses our temp DB
+        from pathlib import Path
+        self._patcher = unittest.mock.patch.object(mem_mod, "DB_PATH", Path(self._tmp_path))
+        self._patcher.start()
+
+        from app.services.persistence.memory_persistence import (
+            save_user_memory, get_user_memories, format_user_memories,
+        )
+        self.save = save_user_memory
+        self.get = get_user_memories
+        self.fmt = format_user_memories
+
+    def tearDown(self):
+        self._patcher.stop()
+        import os
+        os.unlink(self._tmp_path)
+
+    # --------------------------------------------------------------------- #
+    # Basic save + retrieve                                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_save_and_retrieve_single_memory(self):
+        self.save("thread-1", "favorite_airport", "MAD", "travel_preference")
+        memories = self.get("thread-1")
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0]["memory_key"], "favorite_airport")
+        self.assertEqual(memories[0]["memory_value"], "MAD")
+        self.assertEqual(memories[0]["category"], "travel_preference")
+
+    def test_save_multiple_keys_same_thread(self):
+        self.save("thread-2", "favorite_airport", "BCN", "travel_preference")
+        self.save("thread-2", "budget_preference", "800 EUR", "travel_preference")
+        memories = self.get("thread-2")
+        keys = {m["memory_key"] for m in memories}
+        self.assertIn("favorite_airport", keys)
+        self.assertIn("budget_preference", keys)
+
+    # --------------------------------------------------------------------- #
+    # UPSERT: updating an existing key                                        #
+    # --------------------------------------------------------------------- #
+
+    def test_upsert_updates_existing_value(self):
+        self.save("thread-3", "favorite_airport", "MAD", "travel_preference")
+        self.save("thread-3", "favorite_airport", "JFK", "travel_preference")  # update
+        memories = self.get("thread-3")
+        # Only one row for the same key
+        airport_memories = [m for m in memories if m["memory_key"] == "favorite_airport"]
+        self.assertEqual(len(airport_memories), 1)
+        self.assertEqual(airport_memories[0]["memory_value"], "JFK")
+
+    # --------------------------------------------------------------------- #
+    # Thread isolation                                                        #
+    # --------------------------------------------------------------------- #
+
+    def test_thread_isolation(self):
+        self.save("thread-A", "favorite_airport", "MAD", "travel_preference")
+        self.save("thread-B", "favorite_airport", "LHR", "travel_preference")
+
+        a_memories = self.get("thread-A")
+        b_memories = self.get("thread-B")
+
+        self.assertEqual(a_memories[0]["memory_value"], "MAD")
+        self.assertEqual(b_memories[0]["memory_value"], "LHR")
+
+    def test_empty_thread_returns_empty_list(self):
+        self.assertEqual(self.get("thread-nonexistent"), [])
+
+    # --------------------------------------------------------------------- #
+    # format_user_memories                                                    #
+    # --------------------------------------------------------------------- #
+
+    def test_format_returns_non_empty_string(self):
+        self.save("thread-fmt", "favorite_airport", "MAD", "travel_preference")
+        result = self.fmt("thread-fmt")
+        self.assertIsInstance(result, str)
+        self.assertIn("favorite_airport", result)
+        self.assertIn("MAD", result)
+
+    def test_format_empty_thread_returns_empty_string(self):
+        self.assertEqual(self.fmt("thread-noone"), "")
+
+
+class TestConversationPersistence(unittest.TestCase):
+    """Integration tests for save_message / get_recent_messages using a temporary SQLite DB."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT
+        );
+    """
+
+    def setUp(self):
+        import sqlite3, tempfile, os
+        import app.services.persistence.conversation_persistence as conv_mod
+
+        self._fd, self._tmp_path = tempfile.mkstemp(suffix=".db")
+        os.close(self._fd)
+
+        with sqlite3.connect(self._tmp_path) as conn:
+            conn.executescript(self._SCHEMA)
+
+        from pathlib import Path
+        self._patcher = unittest.mock.patch.object(conv_mod, "DB_PATH", Path(self._tmp_path))
+        self._patcher.start()
+
+        from app.services.persistence.conversation_persistence import save_message, get_recent_messages
+        self.save = save_message
+        self.get = get_recent_messages
+
+    def tearDown(self):
+        self._patcher.stop()
+        import os
+        os.unlink(self._tmp_path)
+
+    # --------------------------------------------------------------------- #
+    # Basic save + retrieve                                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_save_and_retrieve_message(self):
+        self.save("t1", "user", "Hola, ¿qué tiempo hace en Madrid?")
+        msgs = self.get("t1")
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0]["role"], "user")
+        self.assertIn("Madrid", msgs[0]["content"])
+
+    def test_roles_preserved(self):
+        self.save("t2", "user", "Pregunta")
+        self.save("t2", "assistant", "Respuesta del asistente")
+        msgs = self.get("t2")
+        roles = [m["role"] for m in msgs]
+        self.assertIn("user", roles)
+        self.assertIn("assistant", roles)
+
+    # --------------------------------------------------------------------- #
+    # Ordering: get_recent_messages returns chronological order               #
+    # --------------------------------------------------------------------- #
+
+    def test_messages_returned_in_chronological_order(self):
+        for i in range(5):
+            self.save("t3", "user", f"Mensaje {i}")
+        msgs = self.get("t3")
+        contents = [m["content"] for m in msgs]
+        # First inserted should be first returned (reversed from DESC fetch)
+        self.assertEqual(contents[0], "Mensaje 0")
+        self.assertEqual(contents[-1], "Mensaje 4")
+
+    # --------------------------------------------------------------------- #
+    # Limit                                                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_limit_respected(self):
+        for i in range(10):
+            self.save("t4", "user", f"msg{i}")
+        msgs = self.get("t4", limit=3)
+        self.assertEqual(len(msgs), 3)
+        # Should return the 3 most recent, in chronological order
+        contents = [m["content"] for m in msgs]
+        self.assertIn("msg9", contents)
+
+    # --------------------------------------------------------------------- #
+    # Thread isolation                                                        #
+    # --------------------------------------------------------------------- #
+
+    def test_thread_isolation(self):
+        self.save("thread-X", "user", "Mensaje de X")
+        self.save("thread-Y", "user", "Mensaje de Y")
+
+        x_msgs = self.get("thread-X")
+        y_msgs = self.get("thread-Y")
+
+        self.assertEqual(len(x_msgs), 1)
+        self.assertEqual(len(y_msgs), 1)
+        self.assertIn("X", x_msgs[0]["content"])
+        self.assertIn("Y", y_msgs[0]["content"])
+
+    def test_empty_thread_returns_empty_list(self):
+        self.assertEqual(self.get("thread-void"), [])
+
+
+class TestChatMemoryServicePersistentHistory(unittest.TestCase):
+    """Tests for ChatMemoryService.get_persistent_history and format_persistent_memory
+    using a patched conversation persistence layer."""
+
+    def _make_rows(self, pairs):
+        """Build row dicts like conversation_persistence returns."""
+        from datetime import datetime
+        return [
+            {"role": role, "content": content, "created_at": datetime.utcnow().isoformat()}
+            for role, content in pairs
+        ]
+
+    def test_get_persistent_history_returns_langchain_messages(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        rows = self._make_rows([("user", "Hola"), ("assistant", "¡Hola! ¿En qué te ayudo?"), ("user", "Quiero ir a Roma")])
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=rows):
+            history = ChatMemoryService.get_persistent_history("thread-hist")
+
+        self.assertEqual(len(history), 3)
+        self.assertIsInstance(history[0], HumanMessage)
+        self.assertIsInstance(history[1], AIMessage)
+        self.assertIsInstance(history[2], HumanMessage)
+        self.assertEqual(history[0].content, "Hola")
+
+    def test_get_persistent_history_skips_empty_content(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        rows = self._make_rows([("user", "Hola"), ("assistant", ""), ("user", "Roma")])
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=rows):
+            history = ChatMemoryService.get_persistent_history("thread-empty")
+
+        # Empty assistant message should be skipped
+        self.assertEqual(len(history), 2)
+
+    def test_get_persistent_history_returns_empty_on_db_error(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", side_effect=Exception("DB down")):
+            history = ChatMemoryService.get_persistent_history("thread-err")
+
+        self.assertEqual(history, [])
+
+    def test_format_persistent_memory_returns_string(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        rows = self._make_rows([("user", "Quiero ir a Lisboa"), ("assistant", "Claro, te ayudo")])
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=rows):
+            result = ChatMemoryService.format_persistent_memory("thread-fmt")
+
+        self.assertIn("user:", result)
+        self.assertIn("Lisboa", result)
+        self.assertIn("assistant:", result)
+
+    def test_format_persistent_memory_returns_empty_string_on_error(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", side_effect=Exception("DB down")):
+            result = ChatMemoryService.format_persistent_memory("thread-err")
+
+        self.assertEqual(result, "")
+
+
+class TestBuildMemoryContext(unittest.TestCase):
+    """Tests for ChatMemoryService.build_memory_context_for_agent — pure logic."""
+
+    def setUp(self):
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+        self.build = ChatMemoryService.build_memory_context_for_agent
+
+    def test_no_memory_returns_raw_message(self):
+        result = self.build("t", "", "", "¿Qué tiempo hace en Berlín?")
+        self.assertEqual(result, "¿Qué tiempo hace en Berlín?")
+
+    def test_long_term_memory_prepended(self):
+        result = self.build("t", "", "- favorite_airport: MAD", "¿Vuelos disponibles?")
+        self.assertIn("Long-term user memory", result)
+        self.assertIn("MAD", result)
+        self.assertIn("¿Vuelos disponibles?", result)
+
+    def test_short_term_memory_prepended(self):
+        result = self.build("t", "user: Hola\nassistant: Hi", "", "Siguiente pregunta")
+        self.assertIn("Previous conversation memory", result)
+        self.assertIn("user: Hola", result)
+        self.assertIn("Siguiente pregunta", result)
+
+    def test_both_memories_in_output(self):
+        result = self.build("t", "user: Hola", "- budget: 500 EUR", "Mi mensaje")
+        self.assertIn("Long-term user memory", result)
+        self.assertIn("Previous conversation memory", result)
+        self.assertIn("Mi mensaje", result)
+
+    def test_current_message_always_last(self):
+        result = self.build("t", "user: Hola", "- budget: 500", "Mi mensaje final")
+        self.assertTrue(result.endswith("Mi mensaje final"))
+
+
+class TestRecommenderWeatherTool(unittest.IsolatedAsyncioTestCase):
+    """Tests for the get_weather tool in app.agents.recommender.tools.
+    All HTTP calls are mocked — no real network access."""
+
+    def _make_wttr_response(self, temp_c=22, feels_like=20, desc="Sunny", humidity=55, precip=0.0):
+        """Build a fake wttr.in JSON payload."""
+        return {
+            "current_condition": [
+                {
+                    "temp_C": str(temp_c),
+                    "FeelsLikeC": str(feels_like),
+                    "weatherDesc": [{"value": desc}],
+                    "humidity": str(humidity),
+                    "precipMM": str(precip),
+                }
+            ]
+        }
+
+    def _make_async_client_mock(self, response_data=None, raise_exc=None):
+        """Return an async context manager mock for httpx.AsyncClient."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = response_data or {}
+
+        mock_client = AsyncMock()
+        if raise_exc:
+            mock_client.get = AsyncMock(side_effect=raise_exc)
+        else:
+            mock_client.get = AsyncMock(return_value=mock_resp)
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        return ctx
+
+    # ---------------------------------------------------------------- happy path
+    async def test_get_weather_returns_structured_result(self):
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=18, feels_like=15, desc="Partly cloudy", humidity=70, precip=1.5)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Berlin")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["city"], "Berlin")
+        self.assertEqual(result["temperature_c"], 18)
+        self.assertEqual(result["feels_like_c"], 15)
+        self.assertEqual(result["description"], "Partly cloudy")
+        self.assertEqual(result["humidity_pct"], 70)
+        self.assertAlmostEqual(result["precipitation_mm"], 1.5)
+
+    async def test_get_weather_hot_city(self):
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=38, feels_like=42, desc="Sunny", humidity=20, precip=0.0)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Sevilla")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["city"], "Sevilla")
+        self.assertEqual(result["temperature_c"], 38)
+        self.assertEqual(result["description"], "Sunny")
+
+    async def test_get_weather_cold_city(self):
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=-5, feels_like=-12, desc="Heavy snow", humidity=90, precip=8.0)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Reikiavik")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["temperature_c"], -5)
+        self.assertEqual(result["description"], "Heavy snow")
+
+    # ---------------------------------------------------------------- error handling
+    async def test_get_weather_timeout_returns_error_json(self):
+        import json as _json, httpx
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        ctx = self._make_async_client_mock(raise_exc=httpx.HTTPError("timeout"))
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Madrid")
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+        self.assertIn("Madrid", result["error"])
+
+    async def test_get_weather_missing_key_returns_error_json(self):
+        """Unexpected wttr.in response (missing current_condition) → error JSON."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        # Response with completely wrong structure
+        ctx = self._make_async_client_mock(response_data={"unexpected": "data"})
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Roma")
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+
+    async def test_get_weather_empty_condition_list_returns_error(self):
+        """Empty current_condition list → KeyError/IndexError → error JSON."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        ctx = self._make_async_client_mock(response_data={"current_condition": []})
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Lisboa")
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+
+    async def test_get_weather_city_name_url_encoded(self):
+        """City names with spaces/accents should not crash the URL builder."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=25, feels_like=24, desc="Clear", humidity=60, precip=0.0)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("San Sebastián")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["city"], "San Sebastián")
+        self.assertNotIn("error", result)
+
+
+class TestRecommenderPackingTool(unittest.IsolatedAsyncioTestCase):
+    """Tests for the get_packing_items tool in app.agents.recommender.tools."""
+
+    async def test_packing_items_reads_real_csv(self):
+        """Happy path: reads the actual objetos.csv bundled with the project."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+        result = _json.loads(result_str)
+
+        self.assertIn("items", result)
+        self.assertIn("total", result)
+        self.assertGreater(result["total"], 0)
+        # Verify a few known items from objetos.csv
+        items_lower = [i.lower() for i in result["items"]]
+        self.assertTrue(any("ropa" in i for i in items_lower), "Should contain clothing items")
+        self.assertTrue(any("cargador" in i or "power" in i for i in items_lower), "Should contain electronics")
+
+    async def test_packing_items_count_matches_csv(self):
+        """The total field should match the actual number of items in the list."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+        result = _json.loads(result_str)
+
+        self.assertEqual(result["total"], len(result["items"]))
+
+    async def test_packing_items_no_empty_entries(self):
+        """No item in the list should be an empty string."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+        result = _json.loads(result_str)
+
+        for item in result["items"]:
+            self.assertTrue(len(item.strip()) > 0, f"Empty item found: {repr(item)}")
+
+    async def test_packing_items_csv_not_found_returns_error(self):
+        """If the CSV file does not exist, return error JSON instead of raising."""
+        import json as _json
+        from pathlib import Path
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        with unittest.mock.patch("app.agents.recommender.tools._DATA_PATH", Path("/nonexistent/objetos.csv")):
+            result_str = await fn()
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+
+    async def test_packing_items_empty_csv_returns_error(self):
+        """If the CSV exists but is empty, return error JSON instead of an empty list."""
+        import json as _json
+        import tempfile, os
+        from pathlib import Path
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write("")  # empty file
+            tmp_path = Path(f.name)
+
+        try:
+            fn = make_get_packing_items_coroutine()
+            with unittest.mock.patch("app.agents.recommender.tools._DATA_PATH", tmp_path):
+                result_str = await fn()
+            result = _json.loads(result_str)
+            self.assertIn("error", result)
+        finally:
+            os.unlink(tmp_path)
+
+    async def test_packing_items_returns_non_ascii_correctly(self):
+        """Spanish item names with accents and special chars should be preserved."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+
+        # ensure_ascii=False → accented chars should appear directly in JSON
+        self.assertIn("ó", result_str + "ú" + "á")  # at least one accented char
+        result = _json.loads(result_str)
+        all_text = " ".join(result["items"])
+        # CSV has "Almohada de viaje", "Protector solar", "Ropa interior", etc.
+        self.assertTrue(any(c in all_text for c in "áéíóúñü"), "Accented chars should be preserved")
+
+
+class TestRecommenderPrompt(unittest.TestCase):
+    """Tests for the recommender system prompt structure and content."""
+
+    @classmethod
+    def setUpClass(cls):
+        from app.agents.recommender.prompts import get_recommender_system_prompt
+        cls.prompt = get_recommender_system_prompt()
+
+    # ---------------------------------------------------------------- required sections
+    def test_prompt_contains_tools_section(self):
+        self.assertIn("TOOLS", self.prompt)
+
+    def test_prompt_contains_output_format_section(self):
+        self.assertIn("OUTPUT FORMAT", self.prompt)
+
+    def test_prompt_contains_classification_rules_section(self):
+        self.assertIn("CLASSIFICATION RULES", self.prompt)
+
+    def test_prompt_mentions_get_weather_tool(self):
+        self.assertIn("get_weather", self.prompt)
+
+    def test_prompt_mentions_get_packing_items_tool(self):
+        self.assertIn("get_packing_items", self.prompt)
+
+    # ---------------------------------------------------------------- output format rules
+    def test_prompt_mentions_obligatorios_category(self):
+        """The three classification buckets must be named explicitly."""
+        self.assertIn("OBLIGATORIOS", self.prompt)
+
+    def test_prompt_mentions_recomendados_category(self):
+        self.assertIn("RECOMENDADOS", self.prompt)
+
+    def test_prompt_mentions_descartados_category(self):
+        self.assertIn("DESCARTADOS", self.prompt)
+
+    def test_prompt_instructs_tool_call_order(self):
+        """Prompt must specify that get_weather is called BEFORE get_packing_items."""
+        weather_pos = self.prompt.find("get_weather")
+        packing_pos = self.prompt.find("get_packing_items")
+        self.assertGreater(packing_pos, weather_pos,
+                           "get_weather should appear before get_packing_items in the prompt")
+
+    def test_prompt_instructs_language_matching(self):
+        """Agent must respond in the same language as the user."""
+        prompt_lower = self.prompt.lower()
+        self.assertTrue(
+            "same language" in prompt_lower or "mismo idioma" in prompt_lower
+            or "spanish or english" in prompt_lower,
+            "Prompt should instruct to match user language"
+        )
+
+    def test_prompt_forbids_inventing_items(self):
+        """Prompt must explicitly forbid inventing items not in the list."""
+        prompt_lower = self.prompt.lower()
+        self.assertTrue(
+            "not in the list" in prompt_lower or "no están en la lista" in prompt_lower
+            or "invent" in prompt_lower,
+            "Prompt should forbid inventing items outside the provided list"
+        )
+
+    # ---------------------------------------------------------------- date context
+    def test_prompt_contains_current_date(self):
+        """Prompt must inject the current date for relative date resolution."""
+        import re
+        # Should contain something like "2026-07-16" or "16/07/2026"
+        self.assertTrue(
+            re.search(r"20\d\d", self.prompt) is not None,
+            "Prompt should contain the current year for date context"
+        )
+
+    def test_prompt_is_non_empty_string(self):
+        self.assertIsInstance(self.prompt, str)
+        self.assertGreater(len(self.prompt), 100)
+
+
+class TestRAGTextProcessing(unittest.TestCase):
+    """Tests for pure text-processing helpers in app.services.rag.
+    No ChromaDB, no embeddings, no LLM — all functions are deterministic."""
+
+    # Use setUp (instance method) so Python's descriptor protocol does not
+    # wrap the functions as bound methods when called via self.
+    def setUp(self):
+        from app.services.rag import (
+            _normalize_text,
+            _remove_pdf_noise,
+            _chunk_text,
+            _content_hash,
+            _last_words,
+        )
+        self.normalize = _normalize_text
+        self.remove_noise = _remove_pdf_noise
+        self.chunk = _chunk_text
+        self.content_hash = _content_hash
+        self.last_words = _last_words
+
+    # ---------------------------------------------------------------- _normalize_text
+    def test_normalize_strips_leading_trailing_whitespace(self):
+        self.assertEqual(self.normalize("  hola  "), "hola")
+
+    def test_normalize_replaces_cr_with_newline(self):
+        result = self.normalize("línea1\r\nlínea2")
+        self.assertNotIn("\r", result)
+        self.assertIn("línea1", result)
+
+    def test_normalize_removes_soft_hyphen_at_line_end(self):
+        # "-\n" (soft hyphen) should be removed so words rejoin
+        result = self.normalize("docu-\nmentos de viaje")
+        self.assertIn("documentos", result)
+        self.assertNotIn("-\n", result)
+
+    def test_normalize_collapses_multiple_spaces(self):
+        result = self.normalize("visado   para   España")
+        self.assertEqual(result, "visado para España")
+
+    def test_normalize_collapses_excess_blank_lines(self):
+        result = self.normalize("párrafo 1\n\n\n\n\npárrafo 2")
+        self.assertNotIn("\n\n\n", result)
+        self.assertIn("párrafo 1", result)
+        self.assertIn("párrafo 2", result)
+
+    def test_normalize_empty_string_returns_empty(self):
+        self.assertEqual(self.normalize(""), "")
+
+    def test_normalize_null_bytes_replaced(self):
+        result = self.normalize("texto\x00con\x00nulos")
+        self.assertNotIn("\x00", result)
+
+    # ---------------------------------------------------------------- _remove_pdf_noise
+    def test_remove_noise_strips_urls(self):
+        result = self.remove_noise("Visita https://youreurope.europa.eu para más info")
+        self.assertNotIn("https://", result)
+
+    def test_remove_noise_strips_date_patterns(self):
+        result = self.remove_noise("Actualizado 1/6/2024, 10:30 AM en Europa")
+        self.assertNotIn("1/6/2024", result)
+
+    def test_remove_noise_strips_your_europe_phrase(self):
+        result = self.remove_noise("Según Your Europe, necesitas pasaporte")
+        self.assertNotIn("Your Europe", result)
+
+    def test_remove_noise_strips_menu_keyword(self):
+        result = self.remove_noise("MENÚ principal del sitio")
+        self.assertNotIn("MENÚ", result)
+
+    def test_remove_noise_preserves_meaningful_content(self):
+        text = "Para viajar a Alemania necesitas un pasaporte válido."
+        result = self.remove_noise(text)
+        self.assertIn("pasaporte válido", result)
+
+    # ---------------------------------------------------------------- _chunk_text
+    def test_chunk_empty_string_returns_empty_list(self):
+        self.assertEqual(self.chunk(""), [])
+
+    def test_chunk_short_text_returns_single_chunk(self):
+        text = "Visado para Europa. Solo necesitas el DNI."
+        chunks = self.chunk(text)
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0], text)
+
+    def test_chunk_long_text_creates_multiple_chunks(self):
+        # Build a text clearly longer than CHUNK_SIZE (900 chars)
+        sentence = "Para viajar dentro de la Unión Europea necesitas un documento de identidad válido. "
+        long_text = sentence * 20  # ~1600 chars
+        chunks = self.chunk(long_text)
+        self.assertGreater(len(chunks), 1)
+
+    def test_chunk_no_duplicates(self):
+        sentence = "Párrafo de ejemplo para el test. "
+        text = sentence * 15
+        chunks = self.chunk(text)
+        self.assertEqual(len(chunks), len(set(chunks)))
+
+    def test_chunk_all_content_covered(self):
+        """Every chunk must be non-empty and come from the original text."""
+        text = "Sección 1: documentos de viaje.\n\nSección 2: visados para la UE.\n\nSección 3: pasaportes."
+        chunks = self.chunk(text)
+        for c in chunks:
+            self.assertTrue(len(c.strip()) > 0)
+
+    def test_chunk_paragraph_boundaries_respected(self):
+        """Two clearly separate paragraphs short enough to fit alone stay separate."""
+        p1 = "El DNI es suficiente para viajar dentro de la UE."
+        p2 = "El pasaporte es necesario para países fuera de la UE."
+        text = f"{p1}\n\n{p2}"
+        chunks = self.chunk(text)
+        # Both paragraphs should appear somewhere in the chunks
+        all_text = " ".join(chunks)
+        self.assertIn("DNI", all_text)
+        self.assertIn("pasaporte", all_text)
+
+    # ---------------------------------------------------------------- _content_hash
+    def test_content_hash_returns_hex_string(self):
+        h = self.content_hash("test")
+        self.assertRegex(h, r'^[0-9a-f]{40}$')  # SHA-1 = 40 hex chars
+
+    def test_content_hash_same_input_same_output(self):
+        self.assertEqual(self.content_hash("visado"), self.content_hash("visado"))
+
+    def test_content_hash_different_inputs_differ(self):
+        self.assertNotEqual(self.content_hash("pasaporte"), self.content_hash("visado"))
+
+    # ---------------------------------------------------------------- _last_words
+    def test_last_words_returns_last_n(self):
+        result = self.last_words("uno dos tres cuatro cinco", max_words=3)
+        self.assertEqual(result, "tres cuatro cinco")
+
+    def test_last_words_shorter_than_n(self):
+        result = self.last_words("uno dos", max_words=10)
+        self.assertEqual(result, "uno dos")
+
+    def test_last_words_empty_string(self):
+        result = self.last_words("", max_words=5)
+        self.assertEqual(result, "")
+
+
+class TestRAGQueryLogic(unittest.TestCase):
+    """Tests for query_normative_documents with mocked ChromaDB and LLM."""
+
+    def _make_collection_mock(self, documents, distances):
+        """Return a MagicMock collection that returns the given docs and distances."""
+        mock_col = MagicMock()
+        mock_col.query.return_value = {
+            "documents": [documents],
+            "metadatas": [[
+                {"source": f"doc{i}.pdf", "page": 1, "chunk_index": i, "content_hash": "abc"}
+                for i in range(len(documents))
+            ]],
+            "distances": [distances],
+        }
+        return mock_col
+
+    def test_empty_query_returns_specific_message(self):
+        from app.services.rag import query_normative_documents
+        answer, sources = query_normative_documents("")
+        self.assertIn("vacía", answer.lower())
+        self.assertEqual(sources, [])
+
+    def test_whitespace_only_query_returns_specific_message(self):
+        from app.services.rag import query_normative_documents
+        answer, sources = query_normative_documents("   \n  ")
+        self.assertIn("vacía", answer.lower())
+
+    def test_no_close_results_returns_european_fallback_spanish(self):
+        """When all distances > MAX_DISTANCE, returns the European fallback in Spanish."""
+        from app.services.rag import query_normative_documents
+
+        # Distance 0.99 = very far → no useful results
+        mock_col = self._make_collection_mock(
+            ["chunk irrelevante"],
+            [0.99],
+        )
+        # detect is imported locally inside query_normative_documents → patch at source
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col), \
+             unittest.mock.patch("langdetect.detect", return_value="es"):
+            answer, sources = query_normative_documents("visado Japón")
+
+        self.assertIn("Europa", answer)
+        self.assertIn("siento", answer.lower())
+
+    def test_no_close_results_returns_european_fallback_english(self):
+        """Same fallback but in English when the query is in English."""
+        from app.services.rag import query_normative_documents
+
+        mock_col = self._make_collection_mock(["irrelevant chunk"], [0.99])
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col), \
+             unittest.mock.patch("langdetect.detect", return_value="en"):
+            answer, sources = query_normative_documents("visa requirements Japan")
+
+        self.assertIn("Europe", answer)
+        self.assertIn("Sorry", answer)
+
+    def test_good_results_calls_compose_rag_answer(self):
+        """When results are close enough, compose_rag_answer is called and answer returned."""
+        from app.services.rag import query_normative_documents
+
+        mock_col = self._make_collection_mock(
+            ["Para viajar a Alemania necesitas el DNI válido."],
+            [0.20],   # well within MAX_DISTANCE 0.50
+        )
+        # compose_rag_answer is imported locally inside the function → patch at llm module
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col), \
+             unittest.mock.patch("app.services.llm.compose_rag_answer", return_value="Necesitas el DNI.") as mock_compose:
+            answer, sources = query_normative_documents("documentos para Alemania")
+
+        mock_compose.assert_called_once()
+        self.assertEqual(answer, "Necesitas el DNI.")
+        self.assertEqual(len(sources), 1)
+
+    def test_good_results_sources_contain_score(self):
+        """Each source in results should have a 'score' field (1 - distance)."""
+        from app.services.rag import query_normative_documents
+
+        mock_col = self._make_collection_mock(
+            ["Chunk sobre pasaportes."],
+            [0.30],
+        )
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col), \
+             unittest.mock.patch("app.services.llm.compose_rag_answer", return_value="Respuesta"):
+            _, sources = query_normative_documents("pasaportes UE")
+
+        self.assertTrue(len(sources) > 0)
+        self.assertIn("score", sources[0])
+        self.assertAlmostEqual(sources[0]["score"], round(1 - 0.30, 4))
+
+    def test_results_filtered_by_max_distance(self):
+        """Chunks with distance > MAX_DISTANCE are excluded from sources even if returned by ChromaDB."""
+        from app.services.rag import query_normative_documents
+
+        mock_col = self._make_collection_mock(
+            ["chunk cercano", "chunk lejano"],
+            [0.20, 0.80],   # second one exceeds MAX_DISTANCE=0.50
+        )
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col), \
+             unittest.mock.patch("app.services.llm.compose_rag_answer", return_value="OK"):
+            _, sources = query_normative_documents("documentos viaje")
+
+        # Only the close chunk should survive
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["document"], "chunk cercano")
+
+
+class TestRAGPDFExtraction(unittest.TestCase):
+    """Integration tests using the real rag_docs/ PDF and TXT files.
+    These tests do NOT require ChromaDB or an embedding model — only pdfplumber."""
+
+    RAG_DOCS = Path(__file__).resolve().parent.parent / "rag_docs"
+
+    def setUp(self):
+        from app.services.rag import _build_chunks_from_pdf_file, _build_chunks_from_text_file
+        self.build_pdf = _build_chunks_from_pdf_file
+        self.build_txt = _build_chunks_from_text_file
+
+    def _get_pdf(self, name_fragment: str) -> Path:
+        matches = list(self.RAG_DOCS.glob(f"*{name_fragment}*.pdf"))
+        if not matches:
+            self.skipTest(f"No PDF matching '{name_fragment}' found in rag_docs/")
+        return matches[0]
+
+    # ---------------------------------------------------------------- TXT files
+    def test_txt_visa_produces_chunks(self):
+        txt_file = self.RAG_DOCS / "visa.txt"
+        if not txt_file.exists():
+            self.skipTest("visa.txt not found")
+        docs = self.build_txt(txt_file)
+        self.assertGreater(len(docs), 0)
+        self.assertIn("document", docs[0])
+        self.assertIn("metadata", docs[0])
+
+    def test_txt_seguridad_chunk_has_expected_metadata(self):
+        txt_file = self.RAG_DOCS / "seguridad.txt"
+        if not txt_file.exists():
+            self.skipTest("seguridad.txt not found")
+        docs = self.build_txt(txt_file)
+        self.assertGreater(len(docs), 0)
+        meta = docs[0]["metadata"]
+        self.assertEqual(meta["type"], "text")
+        self.assertEqual(meta["source"], "seguridad.txt")
+        self.assertIn("content_hash", meta)
+
+    def test_txt_chunks_have_unique_ids(self):
+        txt_file = self.RAG_DOCS / "visa.txt"
+        if not txt_file.exists():
+            self.skipTest("visa.txt not found")
+        docs = self.build_txt(txt_file)
+        ids = [d["id"] for d in docs]
+        self.assertEqual(len(ids), len(set(ids)), "Chunk IDs must be unique")
+
+    # ---------------------------------------------------------------- PDF files
+    def test_pdf_ciudadanos_ue_produces_chunks(self):
+        pdf = self._get_pdf("ciudadanos de la UE")
+        docs = self.build_pdf(pdf)
+        self.assertGreater(len(docs), 0, "PDF should produce at least one chunk")
+
+    def test_pdf_chunks_are_non_empty_strings(self):
+        pdf = self._get_pdf("ciudadanos de la UE")
+        docs = self.build_pdf(pdf)
+        for doc in docs:
+            self.assertIsInstance(doc["document"], str)
+            self.assertGreater(len(doc["document"].strip()), 0)
+
+    def test_pdf_chunks_have_page_metadata(self):
+        pdf = self._get_pdf("ciudadanos de la UE")
+        docs = self.build_pdf(pdf)
+        for doc in docs:
+            self.assertIn("page", doc["metadata"])
+            self.assertGreater(doc["metadata"]["page"], 0)
+
+    def test_pdf_chunks_have_unique_ids(self):
+        pdf = self._get_pdf("ciudadanos de la UE")
+        docs = self.build_pdf(pdf)
+        ids = [d["id"] for d in docs]
+        self.assertEqual(len(ids), len(set(ids)), "PDF chunk IDs must be unique")
+
+    def test_pdf_pasaportes_produces_chunks(self):
+        pdf = self._get_pdf("pasaportes")
+        docs = self.build_pdf(pdf)
+        self.assertGreater(len(docs), 0)
+
+    def test_pdf_menores_produces_chunks(self):
+        pdf = self._get_pdf("menores")
+        docs = self.build_pdf(pdf)
+        self.assertGreater(len(docs), 0)
+
+    def test_pdf_content_contains_travel_keywords(self):
+        """Extracted text from EU travel docs should contain relevant Spanish keywords."""
+        pdf = self._get_pdf("ciudadanos de la UE")
+        docs = self.build_pdf(pdf)
+        all_text = " ".join(d["document"] for d in docs).lower()
+        # At least one of these keywords must appear
+        keywords = ["pasaporte", "documento", "identidad", "viaje", "ue", "europa"]
+        self.assertTrue(
+            any(kw in all_text for kw in keywords),
+            f"None of {keywords} found in extracted PDF text"
+        )
+
+    def test_pdf_chunk_size_within_bounds(self):
+        """No individual chunk should exceed CHUNK_SIZE * 1.1 chars (10% tolerance for sentence boundary)."""
+        from app.services.rag import CHUNK_SIZE
+        pdf = self._get_pdf("ciudadanos de la UE")
+        docs = self.build_pdf(pdf)
+        for doc in docs:
+            self.assertLessEqual(
+                len(doc["document"]),
+                CHUNK_SIZE * 1.1,
+                f"Chunk exceeds size limit: {doc['document'][:80]}..."
+            )
+
+
+class TestRAGStatus(unittest.TestCase):
+    """Tests for rag_status() with mocked ChromaDB collection."""
+
+    def test_rag_status_returns_all_expected_keys(self):
+        from app.services.rag import rag_status
+
+        mock_col = MagicMock()
+        mock_col.count.return_value = 42
+
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+            status = rag_status()
+
+        expected_keys = {
+            "collection_name", "document_count", "persist_directory",
+            "embedding_model", "chunk_size", "chunk_overlap",
+            "query_candidates", "max_distance",
+        }
+        self.assertEqual(set(status.keys()), expected_keys)
+
+    def test_rag_status_document_count_matches_collection(self):
+        from app.services.rag import rag_status
+
+        mock_col = MagicMock()
+        mock_col.count.return_value = 137
+
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+            status = rag_status()
+
+        self.assertEqual(status["document_count"], 137)
+
+    def test_rag_status_collection_count_error_returns_none(self):
+        """If collection.count() raises, document_count is None (no crash)."""
+        from app.services.rag import rag_status
+
+        mock_col = MagicMock()
+        mock_col.count.side_effect = Exception("DB error")
+
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+            status = rag_status()
+
+        self.assertIsNone(status["document_count"])
+
+    def test_rag_status_collection_name_correct(self):
+        from app.services.rag import rag_status, COLLECTION_NAME
+
+        mock_col = MagicMock()
+        mock_col.count.return_value = 0
+
+        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+            status = rag_status()
+
+        self.assertEqual(status["collection_name"], COLLECTION_NAME)
+
+
+class TestBraveSearch(unittest.IsolatedAsyncioTestCase):
+    """Tests for app.services.brave_search — all HTTP calls are mocked with httpx."""
+
+    # ------------------------------------------------------------------ helpers
+    def _make_httpx_ok_response(self, data: dict):
+        """Build a mock httpx Response that returns data and does not raise."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = data
+        return mock_resp
+
+    def _make_async_client_mock(self, response):
+        """Return a mock that behaves as `async with httpx.AsyncClient() as client`."""
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=response)
+        ctx_mock = MagicMock()
+        ctx_mock.__aenter__ = AsyncMock(return_value=mock_client)
+        ctx_mock.__aexit__ = AsyncMock(return_value=False)
+        return ctx_mock
+
+    # ------------------------------------------------------------------ availability
+    def test_is_brave_available_false_when_no_key(self):
+        from app.services.brave_search import is_brave_available
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value=None):
+            self.assertFalse(is_brave_available())
+
+    def test_is_brave_available_true_when_key_present(self):
+        from app.services.brave_search import is_brave_available
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"):
+            self.assertTrue(is_brave_available())
+
+    # ------------------------------------------------------------------ no API key
+    async def test_no_api_key_returns_error_dict(self):
+        from app.services.brave_search import brave_web_search
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value=None):
+            result = await brave_web_search("flights to Madrid")
+        self.assertIn("error", result)
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["query"], "flights to Madrid")
+
+    # ------------------------------------------------------------------ successful search
+    async def test_successful_search_returns_structured_result(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        fake_data = {
+            "web": {
+                "results": [
+                    {"title": "Vuelos Madrid", "url": "https://ex.com/1", "description": "Desc 1"},
+                    {"title": "Hoteles BCN",   "url": "https://ex.com/2", "description": "Desc 2"},
+                ]
+            }
+        }
+        ctx = self._make_async_client_mock(self._make_httpx_ok_response(fake_data))
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("vuelos a Madrid")
+
+        self.assertEqual(result["query"], "vuelos a Madrid")
+        self.assertEqual(len(result["results"]), 2)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["results"][0]["title"], "Vuelos Madrid")
+        self.assertEqual(result["results"][0]["url"], "https://ex.com/1")
+
+    async def test_successful_search_empty_web_results(self):
+        """API responds OK but returns no web results → empty list, no crash."""
+        from app.services.brave_search import brave_web_search
+
+        ctx = self._make_async_client_mock(self._make_httpx_ok_response({}))
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("algo raro")
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertNotIn("error", result)
+
+    # ------------------------------------------------------------------ error handling
+    async def test_timeout_returns_error_dict(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("vuelos Madrid")
+
+        self.assertIn("error", result)
+        self.assertEqual(result["results"], [])
+        self.assertIn("timed out", result["error"].lower())
+
+    async def test_http_401_returns_error_dict(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = "Unauthorized"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            message="401 Unauthorized",
+            request=MagicMock(),
+            response=mock_resp,
+        )
+
+        ctx = self._make_async_client_mock(mock_resp)
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="bad-key"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("hoteles Barcelona")
+
+        self.assertIn("error", result)
+        self.assertIn("401", result["error"])
+        self.assertEqual(result["results"], [])
+
+    async def test_http_429_returns_error_dict(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+        mock_resp.text = "Too Many Requests"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            message="429 Too Many Requests",
+            request=MagicMock(),
+            response=mock_resp,
+        )
+
+        ctx = self._make_async_client_mock(mock_resp)
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("hoteles Madrid")
+
+        self.assertIn("error", result)
+        self.assertIn("429", result["error"])
+
+    # ------------------------------------------------------------------ formatter
+    def test_format_search_results_for_llm_returns_valid_json(self):
+        import json as _json
+        from app.services.brave_search import format_search_results_for_llm
+
+        data = {
+            "query": "vuelos Madrid",
+            "results": [
+                {"title": "Flight 1", "url": "https://a.com", "description": "Desc"},
+            ],
+            "total": 1,
+        }
+        output = format_search_results_for_llm(data)
+        parsed = _json.loads(output)
+        self.assertEqual(parsed["query"], "vuelos Madrid")
+        self.assertEqual(parsed["total"], 1)
+        self.assertEqual(parsed["results"][0]["title"], "Flight 1")
+
+    def test_format_search_results_for_llm_with_error_dict(self):
+        import json as _json
+        from app.services.brave_search import format_search_results_for_llm
+
+        data = {"query": "test", "results": [], "error": "BRAVE_API_KEY not configured."}
+        output = format_search_results_for_llm(data)
+        parsed = _json.loads(output)
+        self.assertIn("error", parsed)
+        self.assertEqual(parsed["results"], [])
+
+    def test_format_search_results_preserves_non_ascii(self):
+        import json as _json
+        from app.services.brave_search import format_search_results_for_llm
+
+        data = {"query": "viaje España", "results": [{"title": "Viaje a España", "url": "", "description": ""}], "total": 1}
+        output = format_search_results_for_llm(data)
+        self.assertIn("España", output)  # ensure_ascii=False preserved
+
+
+class TestTravelSearchTool(unittest.IsolatedAsyncioTestCase):
+    """Tests for the travel_search LangChain tool wrapper in general/tools.py."""
+
+    async def test_short_query_appends_travel_keyword(self):
+        """Queries with fewer than 4 words get ' travel' appended before the Brave call."""
+        import json as _json
+        captured = {}
+
+        async def mock_search(query, **kwargs):
+            captured["query"] = query
+            return {"query": query, "results": [], "total": 0}
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            await fn("Madrid vuelos")  # 2 words → must append ' travel'
+
+        self.assertEqual(captured["query"], "Madrid vuelos travel")
+
+    async def test_query_of_three_words_appends_travel(self):
+        captured = {}
+
+        async def mock_search(query, **kwargs):
+            captured["query"] = query
+            return {"query": query, "results": [], "total": 0}
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            await fn("vuelos a Madrid")  # exactly 3 words → must append
+
+        self.assertEqual(captured["query"], "vuelos a Madrid travel")
+
+    async def test_long_query_not_modified(self):
+        """Queries with 4+ words are passed unchanged."""
+        captured = {}
+
+        async def mock_search(query, **kwargs):
+            captured["query"] = query
+            return {"query": query, "results": [], "total": 0}
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            await fn("vuelos baratos Madrid Barcelona Sevilla")  # 5 words
+
+        self.assertEqual(captured["query"], "vuelos baratos Madrid Barcelona Sevilla")
+
+    async def test_no_api_key_returns_warning_json(self):
+        """When Brave is unavailable, tool returns a warning JSON without crashing."""
+        import json as _json
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=False):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            output = await fn("vuelos a Roma")
+
+        parsed = _json.loads(output)
+        self.assertIn("warning", parsed)
+        self.assertEqual(parsed["results"], [])
+        self.assertEqual(parsed["query"], "vuelos a Roma")
+
+    async def test_brave_exception_returns_error_json(self):
+        """If brave_web_search raises unexpectedly, tool catches it and returns JSON error."""
+        import json as _json
+
+        async def mock_search_crash(query, **kwargs):
+            raise RuntimeError("unexpected network failure")
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search_crash):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            output = await fn("vuelos a París")
+
+        parsed = _json.loads(output)
+        self.assertIn("error", parsed)
+
+
 if __name__ == "__main__":
     unittest.main()
