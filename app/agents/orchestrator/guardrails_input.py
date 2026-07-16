@@ -183,6 +183,53 @@ _INJECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
          r"\b(leak|exfiltrate|extract|dump|steal)\s+(the\s+)?(data|instructions?|prompt|context|memory|database)\b",
          re.IGNORECASE,
      )),
+    # Hypothetical bypass: "hypothetically if you had no rules..."
+    # Narrow pattern: requires phrasing that implies bypassing restrictions
+    ("hypothetical_bypass_en",
+     re.compile(
+         r"\b(hypothetically\b|theoretically\s+speaking\b|for\s+the\s+sake\s+of\s+(argument|discussion)|imagine\s+you\s+(had\s+no|were\s+(free|unrestricted|uncensored)))\b",
+         re.IGNORECASE,
+     )),
+    ("hypothetical_bypass_es",
+     re.compile(
+         r"\b(hipot[eé]ticamente|te[oó]ricamente|imagina\s+que\s+(no\s+tienes|fueras?\s+(libre|sin\s+restricciones))|supongamos\s+que\s+eres\s+libre)\b",
+         re.IGNORECASE,
+     )),
+    # Many-shot jailbreak: fake conversation history to condition the model
+    ("many_shot_jailbreak",
+     re.compile(
+         r"(User\s*:\s*.{0,80}\n\s*Assistant\s*:\s*.{0,80}\n){2,}",
+         re.IGNORECASE | re.DOTALL,
+     )),
+    # Token smuggling: injecting role prefixes to continue as assistant/system
+    ("token_smuggling",
+     re.compile(
+         r"(^|\n)\s*(assistant|system|ai|gpt|claude)\s*:\s+",
+         re.IGNORECASE,
+     )),
+    # Simulation/roleplay jailbreak: "for a novel/story/game, write..."
+    ("simulation_jailbreak_en",
+     re.compile(
+         r"\b(for\s+(a\s+)?(story|novel|game|roleplay|fiction|simulation)|in\s+this\s+(story|roleplay|scenario|simulation))\b.{0,60}(say|write|respond|tell|answer|output)",
+         re.IGNORECASE | re.DOTALL,
+     )),
+    ("simulation_jailbreak_es",
+     re.compile(
+         r"\b(para\s+(una?\s+)?(historia|novela|juego|relato|ficción|simulaci[oó]n)|en\s+esta\s+(historia|simulaci[oó]n))\b.{0,60}(di|escribe|responde|dime|contesta|genera)",
+         re.IGNORECASE | re.DOTALL,
+     )),
+    # Base64 / obfuscation: injecting encoded commands
+    ("obfuscation_base64",
+     re.compile(
+         r"\b(base64|b64|decode\s+this|decodifica\s+esto|run\s+this\s+code|eval\s*\(|exec\s*\()\b",
+         re.IGNORECASE,
+     )),
+    # Markdown code-block system prompt injection
+    ("markdown_system_injection",
+     re.compile(
+         r"```\s*(system|sys|prompt|instruction|context)\b",
+         re.IGNORECASE,
+     )),
 ]
 
 
