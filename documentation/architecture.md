@@ -55,7 +55,7 @@ flowchart TB
     end
 
     subgraph Storage ["Almacenamiento y Persistencia"]
-        DB[("🗄️ SQLite DB<br/>travel_assistant.db")]
+        DB[("🗄️ SQLite DB<br/>data/travel_assistant.db")]
         VECTORS[("📂 ChromaDB Store<br/>chromadb_store/")]
     end
 

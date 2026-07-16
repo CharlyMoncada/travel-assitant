@@ -2,8 +2,9 @@ import os
 import json
 import asyncio
 import httpx
-from pathlib import Path
 from fastapi import APIRouter, Request
+
+from ..services.persistence.db import DB_PATH
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
@@ -128,7 +129,7 @@ async def status(request: Request):
     """
     Returns the general status of all subsystems, including the external MCP server.
     """
-    db_file = Path("travel_assistant.db").resolve()
+    db_file = DB_PATH.resolve()
     telegram_service = getattr(request.app.state, "telegram_service", None)
     
     client = getattr(request.app.state, "http_client", None)

@@ -28,7 +28,7 @@ flowchart TD
 
     subgraph persistence ["Capa de Persistencia"]
         remPersist["reminder_persistence.py"]
-        db[("SQLite\ntravel_assistant.db")]
+        db[("SQLite\ndata/travel_assistant.db")]
         remPersist --> db
     end
 
@@ -110,7 +110,7 @@ El servidor usa `mcp.server.sse.SseServerTransport` montado en `/messages`. Dos 
 
 ## Capa de Persistencia (`app/services/persistence/reminder_persistence.py`)
 
-El Servidor MCP delega todas las operaciones de base de datos a `reminder_persistence.py`, que envuelve las llamadas SQLAlchemy contra la base de datos SQLite compartida (`travel_assistant.db`).
+El Servidor MCP delega todas las operaciones de base de datos a `reminder_persistence.py`, que envuelve las llamadas SQLAlchemy contra la base de datos SQLite compartida (`data/travel_assistant.db`).
 
 | Función | Operación |
 |---------|-----------|
