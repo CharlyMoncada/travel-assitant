@@ -691,5 +691,115 @@ class TestOrchestratorConcurrency(unittest.IsolatedAsyncioTestCase):
             orch_module.run_supervisor = original_supervisor
 
 
+class TestRecommenderPrompt(unittest.TestCase):
+    """Tests for the recommender system prompt — content and no-clarifying-questions policy."""
+
+    def setUp(self):
+        from app.agents.recommender.prompts import get_recommender_system_prompt
+        self.prompt = get_recommender_system_prompt()
+
+    def test_prompt_contains_tools_section(self):
+        self.assertIn("TOOLS", self.prompt)
+
+    def test_prompt_contains_output_format_section(self):
+        self.assertIn("OUTPUT FORMAT", self.prompt)
+
+    def test_prompt_contains_classification_rules_section(self):
+        self.assertIn("CLASSIFICATION RULES", self.prompt)
+
+    def test_prompt_prohibits_clarifying_questions(self):
+        """The prompt must explicitly forbid asking the user for clarification."""
+        lower = self.prompt.lower()
+        self.assertTrue(
+            "never ask" in lower or "do not ask" in lower or "no preguntes" in lower,
+            "Prompt must contain a directive prohibiting clarifying questions",
+        )
+
+    def test_prompt_instructs_to_infer_destination_type(self):
+        """Prompt must tell the agent to infer beach/mountain/urban from weather."""
+        lower = self.prompt.lower()
+        self.assertIn("infer", lower)
+
+    def test_prompt_mentions_emoji_categories(self):
+        """Verify the new visual category markers are present."""
+        self.assertIn("✅", self.prompt)
+        self.assertIn("🟡", self.prompt)
+        self.assertIn("❌", self.prompt)
+
+    def test_prompt_includes_current_date(self):
+        import datetime
+        today = datetime.date.today().isoformat()
+        self.assertIn(today, self.prompt)
+
+
+class TestRecommenderPackingItems(unittest.TestCase):
+    """Tests for get_packing_items tool — including the enriched CSV."""
+
+    def test_csv_contains_beach_items(self):
+        """The enriched CSV must include beach-specific items."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        items = []
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    items.append(row[0].strip().lower())
+        beach_keywords = ["bañador", "traje de baño", "chanclas", "playa", "protector solar"]
+        found = any(any(kw in item for kw in beach_keywords) for item in items)
+        self.assertTrue(found, f"No beach items found in CSV. Items: {items}")
+
+    def test_csv_contains_mountain_or_cold_items(self):
+        """The enriched CSV must include cold/mountain-specific items."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        items = []
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    items.append(row[0].strip().lower())
+        cold_keywords = ["térmico", "polar", "montaña", "senderismo", "guantes", "bufanda", "gorro"]
+        found = any(any(kw in item for kw in cold_keywords) for item in items)
+        self.assertTrue(found, f"No cold/mountain items found in CSV. Items: {items}")
+
+    def test_csv_contains_rain_items(self):
+        """The enriched CSV must include rain protection items."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        items = []
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    items.append(row[0].strip().lower())
+        rain_keywords = ["chubasquero", "impermeable", "paraguas"]
+        found = any(any(kw in item for kw in rain_keywords) for item in items)
+        self.assertTrue(found, f"No rain items found in CSV. Items: {items}")
+
+    def test_csv_has_at_least_forty_items(self):
+        """The enriched CSV should have ≥ 40 items for meaningful classification."""
+        from pathlib import Path
+        import csv
+        csv_path = Path(__file__).parent.parent / "app" / "data" / "objetos.csv"
+        count = 0
+        with open(csv_path, newline="", encoding="utf-8") as f:
+            for row in csv.reader(f):
+                if row and row[0].strip():
+                    count += 1
+        self.assertGreaterEqual(count, 40, f"CSV only has {count} items, expected ≥ 40")
+
+    def test_get_packing_items_tool_returns_all_items(self):
+        """The get_packing_items coroutine should return all enriched items."""
+        import asyncio
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+        import json
+        coroutine_fn = make_get_packing_items_coroutine()
+        result = asyncio.run(coroutine_fn())
+        data = json.loads(result)
+        self.assertIn("items", data)
+        self.assertGreaterEqual(data["total"], 40)
+
+
 if __name__ == "__main__":
     unittest.main()
