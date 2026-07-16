@@ -1,7 +1,7 @@
 import sqlite3
 from pathlib import Path
 
-DB_PATH = Path("travel_assistant.db")
+DB_PATH = Path("data/travel_assistant.db")
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 
