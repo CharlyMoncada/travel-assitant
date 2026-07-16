@@ -691,5 +691,319 @@ class TestOrchestratorConcurrency(unittest.IsolatedAsyncioTestCase):
             orch_module.run_supervisor = original_supervisor
 
 
+class TestRecommenderWeatherTool(unittest.IsolatedAsyncioTestCase):
+    """Tests for the get_weather tool in app.agents.recommender.tools.
+    All HTTP calls are mocked — no real network access."""
+
+    def _make_wttr_response(self, temp_c=22, feels_like=20, desc="Sunny", humidity=55, precip=0.0):
+        """Build a fake wttr.in JSON payload."""
+        return {
+            "current_condition": [
+                {
+                    "temp_C": str(temp_c),
+                    "FeelsLikeC": str(feels_like),
+                    "weatherDesc": [{"value": desc}],
+                    "humidity": str(humidity),
+                    "precipMM": str(precip),
+                }
+            ]
+        }
+
+    def _make_async_client_mock(self, response_data=None, raise_exc=None):
+        """Return an async context manager mock for httpx.AsyncClient."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = response_data or {}
+
+        mock_client = AsyncMock()
+        if raise_exc:
+            mock_client.get = AsyncMock(side_effect=raise_exc)
+        else:
+            mock_client.get = AsyncMock(return_value=mock_resp)
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+        return ctx
+
+    # ---------------------------------------------------------------- happy path
+    async def test_get_weather_returns_structured_result(self):
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=18, feels_like=15, desc="Partly cloudy", humidity=70, precip=1.5)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Berlin")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["city"], "Berlin")
+        self.assertEqual(result["temperature_c"], 18)
+        self.assertEqual(result["feels_like_c"], 15)
+        self.assertEqual(result["description"], "Partly cloudy")
+        self.assertEqual(result["humidity_pct"], 70)
+        self.assertAlmostEqual(result["precipitation_mm"], 1.5)
+
+    async def test_get_weather_hot_city(self):
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=38, feels_like=42, desc="Sunny", humidity=20, precip=0.0)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Sevilla")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["city"], "Sevilla")
+        self.assertEqual(result["temperature_c"], 38)
+        self.assertEqual(result["description"], "Sunny")
+
+    async def test_get_weather_cold_city(self):
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=-5, feels_like=-12, desc="Heavy snow", humidity=90, precip=8.0)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Reikiavik")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["temperature_c"], -5)
+        self.assertEqual(result["description"], "Heavy snow")
+
+    # ---------------------------------------------------------------- error handling
+    async def test_get_weather_timeout_returns_error_json(self):
+        import json as _json, httpx
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        ctx = self._make_async_client_mock(raise_exc=httpx.HTTPError("timeout"))
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Madrid")
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+        self.assertIn("Madrid", result["error"])
+
+    async def test_get_weather_missing_key_returns_error_json(self):
+        """Unexpected wttr.in response (missing current_condition) → error JSON."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        # Response with completely wrong structure
+        ctx = self._make_async_client_mock(response_data={"unexpected": "data"})
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Roma")
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+
+    async def test_get_weather_empty_condition_list_returns_error(self):
+        """Empty current_condition list → KeyError/IndexError → error JSON."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        ctx = self._make_async_client_mock(response_data={"current_condition": []})
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("Lisboa")
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+
+    async def test_get_weather_city_name_url_encoded(self):
+        """City names with spaces/accents should not crash the URL builder."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_weather_coroutine
+
+        fake_data = self._make_wttr_response(temp_c=25, feels_like=24, desc="Clear", humidity=60, precip=0.0)
+        ctx = self._make_async_client_mock(response_data=fake_data)
+
+        with unittest.mock.patch("app.agents.recommender.tools.httpx.AsyncClient", return_value=ctx):
+            fn = make_get_weather_coroutine()
+            result_str = await fn("San Sebastián")
+
+        result = _json.loads(result_str)
+        self.assertEqual(result["city"], "San Sebastián")
+        self.assertNotIn("error", result)
+
+
+class TestRecommenderPackingTool(unittest.IsolatedAsyncioTestCase):
+    """Tests for the get_packing_items tool in app.agents.recommender.tools."""
+
+    async def test_packing_items_reads_real_csv(self):
+        """Happy path: reads the actual objetos.csv bundled with the project."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+        result = _json.loads(result_str)
+
+        self.assertIn("items", result)
+        self.assertIn("total", result)
+        self.assertGreater(result["total"], 0)
+        # Verify a few known items from objetos.csv
+        items_lower = [i.lower() for i in result["items"]]
+        self.assertTrue(any("ropa" in i for i in items_lower), "Should contain clothing items")
+        self.assertTrue(any("cargador" in i or "power" in i for i in items_lower), "Should contain electronics")
+
+    async def test_packing_items_count_matches_csv(self):
+        """The total field should match the actual number of items in the list."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+        result = _json.loads(result_str)
+
+        self.assertEqual(result["total"], len(result["items"]))
+
+    async def test_packing_items_no_empty_entries(self):
+        """No item in the list should be an empty string."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+        result = _json.loads(result_str)
+
+        for item in result["items"]:
+            self.assertTrue(len(item.strip()) > 0, f"Empty item found: {repr(item)}")
+
+    async def test_packing_items_csv_not_found_returns_error(self):
+        """If the CSV file does not exist, return error JSON instead of raising."""
+        import json as _json
+        from pathlib import Path
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        with unittest.mock.patch("app.agents.recommender.tools._DATA_PATH", Path("/nonexistent/objetos.csv")):
+            result_str = await fn()
+
+        result = _json.loads(result_str)
+        self.assertIn("error", result)
+
+    async def test_packing_items_empty_csv_returns_error(self):
+        """If the CSV exists but is empty, return error JSON instead of an empty list."""
+        import json as _json
+        import tempfile, os
+        from pathlib import Path
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".csv", delete=False) as f:
+            f.write("")  # empty file
+            tmp_path = Path(f.name)
+
+        try:
+            fn = make_get_packing_items_coroutine()
+            with unittest.mock.patch("app.agents.recommender.tools._DATA_PATH", tmp_path):
+                result_str = await fn()
+            result = _json.loads(result_str)
+            self.assertIn("error", result)
+        finally:
+            os.unlink(tmp_path)
+
+    async def test_packing_items_returns_non_ascii_correctly(self):
+        """Spanish item names with accents and special chars should be preserved."""
+        import json as _json
+        from app.agents.recommender.tools import make_get_packing_items_coroutine
+
+        fn = make_get_packing_items_coroutine()
+        result_str = await fn()
+
+        # ensure_ascii=False → accented chars should appear directly in JSON
+        self.assertIn("ó", result_str + "ú" + "á")  # at least one accented char
+        result = _json.loads(result_str)
+        all_text = " ".join(result["items"])
+        # CSV has "Almohada de viaje", "Protector solar", "Ropa interior", etc.
+        self.assertTrue(any(c in all_text for c in "áéíóúñü"), "Accented chars should be preserved")
+
+
+class TestRecommenderPrompt(unittest.TestCase):
+    """Tests for the recommender system prompt structure and content."""
+
+    @classmethod
+    def setUpClass(cls):
+        from app.agents.recommender.prompts import get_recommender_system_prompt
+        cls.prompt = get_recommender_system_prompt()
+
+    # ---------------------------------------------------------------- required sections
+    def test_prompt_contains_tools_section(self):
+        self.assertIn("TOOLS", self.prompt)
+
+    def test_prompt_contains_output_format_section(self):
+        self.assertIn("OUTPUT FORMAT", self.prompt)
+
+    def test_prompt_contains_classification_rules_section(self):
+        self.assertIn("CLASSIFICATION RULES", self.prompt)
+
+    def test_prompt_mentions_get_weather_tool(self):
+        self.assertIn("get_weather", self.prompt)
+
+    def test_prompt_mentions_get_packing_items_tool(self):
+        self.assertIn("get_packing_items", self.prompt)
+
+    # ---------------------------------------------------------------- output format rules
+    def test_prompt_mentions_obligatorios_category(self):
+        """The three classification buckets must be named explicitly."""
+        self.assertIn("OBLIGATORIOS", self.prompt)
+
+    def test_prompt_mentions_recomendados_category(self):
+        self.assertIn("RECOMENDADOS", self.prompt)
+
+    def test_prompt_mentions_descartados_category(self):
+        self.assertIn("DESCARTADOS", self.prompt)
+
+    def test_prompt_instructs_tool_call_order(self):
+        """Prompt must specify that get_weather is called BEFORE get_packing_items."""
+        weather_pos = self.prompt.find("get_weather")
+        packing_pos = self.prompt.find("get_packing_items")
+        self.assertGreater(packing_pos, weather_pos,
+                           "get_weather should appear before get_packing_items in the prompt")
+
+    def test_prompt_instructs_language_matching(self):
+        """Agent must respond in the same language as the user."""
+        prompt_lower = self.prompt.lower()
+        self.assertTrue(
+            "same language" in prompt_lower or "mismo idioma" in prompt_lower
+            or "spanish or english" in prompt_lower,
+            "Prompt should instruct to match user language"
+        )
+
+    def test_prompt_forbids_inventing_items(self):
+        """Prompt must explicitly forbid inventing items not in the list."""
+        prompt_lower = self.prompt.lower()
+        self.assertTrue(
+            "not in the list" in prompt_lower or "no están en la lista" in prompt_lower
+            or "invent" in prompt_lower,
+            "Prompt should forbid inventing items outside the provided list"
+        )
+
+    # ---------------------------------------------------------------- date context
+    def test_prompt_contains_current_date(self):
+        """Prompt must inject the current date for relative date resolution."""
+        import re
+        # Should contain something like "2026-07-16" or "16/07/2026"
+        self.assertTrue(
+            re.search(r"20\d\d", self.prompt) is not None,
+            "Prompt should contain the current year for date context"
+        )
+
+    def test_prompt_is_non_empty_string(self):
+        self.assertIsInstance(self.prompt, str)
+        self.assertGreater(len(self.prompt), 100)
+
+
 if __name__ == "__main__":
     unittest.main()
