@@ -37,7 +37,7 @@ def make_rules_coroutine():
 
 def make_travel_search_coroutine():
     async def call_travel_search(text: str) -> str:
-        """Search for flights, hotels, transport and travel options using Brave Search."""
+        """Busca vuelos, hoteles, opciones de transporte y viaje usando Brave Search."""
         if not is_brave_available():
             logger.warning(
                 "travel_search tool called but BRAVE_API_KEY is not configured"
@@ -55,8 +55,8 @@ def make_travel_search_coroutine():
                 ensure_ascii=False,
             )
 
-        # Use the user text directly — it's already descriptive enough for travel queries.
-        # For very short inputs (< 4 words) we append a travel context hint.
+        # Usar el texto del usuario directamente — ya es suficientemente descriptivo para consultas de viaje.
+        # Para entradas muy cortas (< 4 palabras) se añade una pista de contexto de viaje.
         words = text.split()
         search_query = text if len(words) >= 4 else f"{text} travel"
         logger.info("travel_search tool: searching Brave for %r", search_query)

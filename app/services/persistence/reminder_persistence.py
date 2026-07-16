@@ -33,9 +33,9 @@ def save_reminder(title: str, due_time: str, note: str):
 
 def list_reminders(date_filter: str = None):
     """
-    Returns all reminders ordered by due_time ascending.
-    If date_filter is provided (format: YYYY-MM-DD), returns only reminders
-    whose due_time starts with that date prefix.
+    Retorna todos los recordatorios ordenados por due_time ascendente.
+    Si se proporciona date_filter (formato: YYYY-MM-DD), retorna solo los recordatorios
+    cuyo due_time comience con ese prefijo de fecha.
     """
     with SessionLocal() as session:
         query = session.query(Reminder)

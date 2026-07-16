@@ -1,15 +1,15 @@
 """
-Brave Search API client for the Travel Assistant.
+Cliente de la API de Brave Search para el Asistente de Viaje.
 
-Provides async travel-focused search using the Brave Search REST API.
-No MCP server is launched — this calls the HTTP endpoint directly,
-which is simpler and more reliable inside an existing async application.
+Proporciona búsquedas asíncronas enfocadas en viajes usando la API REST de Brave Search.
+No se lanza ningún servidor MCP — llama directamente al endpoint HTTP,
+lo que es más sencillo y fiable dentro de una aplicación asíncrona existente.
 
-Configuration:
-    Set BRAVE_API_KEY in the project .env file.
-    Optionally set BRAVE_SEARCH_COUNT (default: 5, max: 20).
+Configuración:
+    Establecer BRAVE_API_KEY en el archivo .env del proyecto.
+    Opcionalmente establecer BRAVE_SEARCH_COUNT (por defecto: 5, máximo: 20).
 
-API docs: https://api.search.brave.com/app/documentation/web-search/get-started
+Documentación de la API: https://api.search.brave.com/app/documentation/web-search/get-started
 """
 
 import json
@@ -22,7 +22,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Constants
+# Constantes
 # ---------------------------------------------------------------------------
 
 _BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
@@ -31,16 +31,16 @@ _REQUEST_TIMEOUT_S = 10
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# API pública
 # ---------------------------------------------------------------------------
 
 def get_brave_api_key() -> Optional[str]:
-    """Return the Brave Search API key from the environment, or None."""
+    """Retorna la clave de API de Brave Search desde el entorno, o None."""
     return os.getenv("BRAVE_API_KEY") or None
 
 
 def is_brave_available() -> bool:
-    """Return True if a Brave API key is configured."""
+    """Retorna True si hay una clave de API de Brave configurada."""
     return bool(get_brave_api_key())
 
 
@@ -52,20 +52,20 @@ async def brave_web_search(
     search_lang: str = "es",
 ) -> dict:
     """
-    Perform a Brave web search and return structured results.
+    Realiza una búsqueda web en Brave y retorna resultados estructurados.
 
     Args:
-        query:       The search query string.
-        count:       Number of results to return (1-20).
-        country:     Two-letter country code to bias results (default: "ES").
-        search_lang: Language code for search results (default: "es").
+        query:       La cadena de consulta de búsqueda.
+        count:       Número de resultados a retornar (1-20).
+        country:     Código de país de dos letras para sesgar resultados (por defecto: "ES").
+        search_lang: Código de idioma para los resultados de búsqueda (por defecto: "es").
 
     Returns:
-        A dict with keys:
-          - "query"   (str)  -- the original query
-          - "results" (list) -- list of {title, url, description} dicts
-          - "total"   (int)  -- number of results returned
-        On error, returns {"query": query, "results": [], "error": "<message>"}
+        Un dict con claves:
+          - "query"   (str)  -- la consulta original
+          - "results" (list) -- lista de dicts {title, url, description}
+          - "total"   (int)  -- número de resultados retornados
+        En caso de error, retorna {"query": query, "results": [], "error": "<mensaje>"}
     """
     api_key = get_brave_api_key()
     if not api_key:
@@ -115,7 +115,7 @@ async def brave_web_search(
         logger.exception("Brave Search: unexpected error for query %r", query)
         return {"query": query, "results": [], "error": str(exc)}
 
-    # Parse web results
+    # Parsear resultados web
     raw_results = (data.get("web") or {}).get("results") or []
     results = [
         {
@@ -134,7 +134,7 @@ async def brave_web_search(
 
 def format_search_results_for_llm(search_response: dict) -> str:
     """
-    Format a brave_web_search response dict into a JSON string
-    suitable for returning from a LangChain tool.
+    Formatea un dict de respuesta de brave_web_search en una cadena JSON
+    adecuada para retornar desde una herramienta LangChain.
     """
     return json.dumps(search_response, ensure_ascii=False, indent=2)

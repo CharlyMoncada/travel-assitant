@@ -6,10 +6,10 @@ from .tools import get_recommender_tools
 
 def create_recommender_agent(llm):
     """
-    Creates and compiles the sub-agent specialized in travel packing recommendations.
+    Crea y compila el subagente especializado en recomendaciones de equipaje de viaje.
 
-    Uses weather data and the default packing list to classify items into
-    mandatory, recommended, and discarded categories for the given destination.
+    Usa datos meteorológicos y la lista de equipaje predeterminada para clasificar artículos en
+    categorías obligatorio, recomendado y descartado para el destino indicado.
     """
     tools = get_recommender_tools()
     return create_agent(

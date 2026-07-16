@@ -24,7 +24,7 @@ class MessagePayload(BaseModel):
 async def fetch_url_status(client: httpx.AsyncClient | None, url: str) -> dict:
     try:
         if client is None:
-            # Fallback in case there is no shared client in the app state
+            # Fallback en caso de que no haya cliente compartido en el estado de la app
             async with httpx.AsyncClient(timeout=1.5) as fallback_client:
                 response = await fallback_client.get(url)
         else:
@@ -53,13 +53,13 @@ async def fetch_url_status(client: httpx.AsyncClient | None, url: str) -> dict:
 
 async def get_external_mcp_status(client: httpx.AsyncClient | None) -> dict:
     """
-    Queries the status of the two independent MCP servers (ports 8002 and 8003)
-    in parallel and non-blocking, and unifies them.
+    Consulta el estado de los dos servidores MCP independientes (puertos 8002 y 8003)
+    en paralelo y de forma no bloqueante, y los unifica.
     """
     finance_url = os.getenv("MCP_FINANCE_SERVER_STATUS_URL", "http://localhost:8002/status")
     reminder_url = os.getenv("MCP_REMINDER_SERVER_STATUS_URL", "http://localhost:8003/status")
     
-    # Query concurrently in parallel using asyncio.gather
+    # Consultar de forma concurrente en paralelo usando asyncio.gather
     finance_status, reminder_status = await asyncio.gather(
         fetch_url_status(client, finance_url),
         fetch_url_status(client, reminder_url),
@@ -98,19 +98,19 @@ async def frontend():
 @router.post("/message")
 async def receive_message(request: Request, payload: MessagePayload):
     """
-    Handles message submission. Asynchronously invokes the LangChainRouter agent.
+    Gestiona el envío de mensajes. Invoca de forma asíncrona al agente LangChainRouter.
     """
     text = payload.text.strip()
     thread_id = payload.thread_id or payload.session_id or "default"
-    # We use await because handle_message is now an asynchronous function (MCP Client)
+    # Usamos await porque handle_message es ahora una función asíncrona (MCP Client)
     return await request.app.state.message_orchestrator.handle_message(text, thread_id=thread_id)
 
 
 @router.get("/expenses")
 def expenses():
     """
-    Synchronous endpoint. FastAPI runs it automatically in an internal thread pool
-    to avoid blocking the main server event loop.
+    Endpoint síncrono. FastAPI lo ejecuta automáticamente en un pool de hilos interno
+    para evitar bloquear el bucle de eventos principal del servidor.
     """
     return get_expense_summary()
 
@@ -118,8 +118,8 @@ def expenses():
 @router.get("/reminders")
 def reminders():
     """
-    Synchronous endpoint. FastAPI runs it automatically in an internal thread pool
-    to avoid blocking the main server event loop.
+    Endpoint síncrono. FastAPI lo ejecuta automáticamente en un pool de hilos interno
+    para evitar bloquear el bucle de eventos principal del servidor.
     """
     return {"reminders": list_reminders()}
 
@@ -127,7 +127,7 @@ def reminders():
 @router.get("/status")
 async def status(request: Request):
     """
-    Returns the general status of all subsystems, including the external MCP server.
+    Retorna el estado general de todos los subsistemas, incluido el servidor MCP externo.
     """
     db_file = DB_PATH.resolve()
     telegram_service = getattr(request.app.state, "telegram_service", None)
@@ -154,7 +154,7 @@ async def status(request: Request):
 @router.get("/mcp/tools")
 async def mcp_tools(request: Request):
     """
-    Maps the tool catalog retrieved from the external MCP server for frontend backwards compatibility.
+    Mapea el catálogo de herramientas recuperado del servidor MCP externo para compatibilidad con versiones anteriores del frontend.
     """
     client = getattr(request.app.state, "http_client", None)
     mcp_status = await get_external_mcp_status(client)
@@ -163,7 +163,7 @@ async def mcp_tools(request: Request):
         tools_list = []
         for tool in mcp_status.get("tools", []):
             if isinstance(tool, dict):
-                # Exposes the rich tool catalog provided by the updated MCP server
+                # Expone el catálogo de herramientas completo proporcionado por el servidor MCP actualizado
                 tools_list.append({
                     "name": tool.get("name"),
                     "description": tool.get("description"),
@@ -171,7 +171,7 @@ async def mcp_tools(request: Request):
                     "examples": []
                 })
             else:
-                # Fallback mapping for backward compatibility with previous versions
+                # Mapeo de fallback para compatibilidad con versiones anteriores
                 tools_list.append({
                     "name": tool,
                     "description": f"Business tool '{tool}' provided by the external MCP server.",

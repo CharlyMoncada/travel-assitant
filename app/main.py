@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 project_root = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=project_root / ".env", override=True)
 
-# Configure root logging to show INFO logs in the console
+# Configurar el logging raíz para mostrar logs INFO en la consola
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -34,13 +34,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global telegram_service
-    # Startup: initialize DB, RAG, and httpx.AsyncClient
+    # Inicio: inicializar BD, RAG y httpx.AsyncClient
     init_db()
     # RAG se inicializa bajo demanda al llamar query_normative_documents()
     
     app.state.http_client = httpx.AsyncClient(timeout=3.0)
     
-    # Pre-connect MCP servers to prevent latency on the first message
+    # Preconectar los servidores MCP para evitar latencia en el primer mensaje
     try:
         await orchestrator.get_sessions()
     except Exception as exc:
@@ -57,12 +57,12 @@ async def lifespan(app: FastAPI):
     
     yield
     
-    # Shutdown: stop Telegram and close httpx.AsyncClient
+    # Apagado: detener Telegram y cerrar httpx.AsyncClient
     if telegram_service:
         telegram_service.stop()
     await app.state.http_client.aclose()
     
-    # Cleanly close MCP connections
+    # Cerrar limpiamente las conexiones MCP
     try:
         await orchestrator.stop()
     except Exception as exc:

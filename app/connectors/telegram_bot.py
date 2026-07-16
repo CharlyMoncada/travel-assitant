@@ -26,7 +26,7 @@ class TelegramBotService:
             logger.exception("Error responding to /start command in chat %s: %s", chat_id, e)
 
     async def _send_message_in_chunks(self, update: Update, text: str):
-        # Telegram has a limit of 4096 characters. We use 4000 to be safe.
+        # Telegram tiene un límite de 4096 caracteres. Usamos 4000 para mayor seguridad.
         max_length = 4000
         if len(text) <= max_length:
             await update.message.reply_text(text)
@@ -65,7 +65,7 @@ class TelegramBotService:
                     agent_used = response.get("agent_used", "unknown")
                     tool_name = response.get("llm_tool", "unknown")
                     
-                    # Human-readable names of the specialized agents
+                    # Nombres legibles de los agentes especializados
                     agent_names = {
                         "supervisor": "Supervisor (Router)",
                         "finance": "Finance Specialist",
@@ -74,18 +74,18 @@ class TelegramBotService:
                     }
                     agent_display = agent_names.get(agent_used, str(agent_used).capitalize())
                     
-                    # Extract the tools actually executed (from MCP or local)
+                    # Extraer las herramientas realmente ejecutadas (de MCP o locales)
                     tools_executed = []
                     tool_resp = response.get("tool_response")
                     
                     if isinstance(tool_resp, dict) and "messages" in tool_resp:
                         for msg in tool_resp["messages"]:
-                            # Support for StructuredTool call objects in LangGraph
+                            # Soporte para objetos de llamada StructuredTool en LangGraph
                             if hasattr(msg, "tool_calls") and msg.tool_calls:
                                 for tc in msg.tool_calls:
                                     tools_executed.append(tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", str(tc)))
                     
-                    # Build detailed metadata signature
+                    # Construir la firma detallada de metadatos
                     signature = f"🤖 Agent: {agent_display}"
                     if tools_executed:
                         signature += f"\n🛠️ MCP/Local Tools: {', '.join(tools_executed)}"

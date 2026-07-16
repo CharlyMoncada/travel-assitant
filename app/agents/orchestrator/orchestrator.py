@@ -31,8 +31,8 @@ logger = logging.getLogger(__name__)
 
 class TravelAgentOrchestrator:
     """
-    Orchestrator based on LangChain acting as a multiserver client for the Model Context Protocol (MCP).
-    Delegates connectivity, translation, execution, and memory persistence to specialized sub-components.
+    Orquestador basado en LangChain que actúa como cliente multiservidor para el Model Context Protocol (MCP).
+    Delega la conectividad, traducción, ejecución y persistencia de memoria a subcomponentes especializados.
     """
 
     def __init__(self):
@@ -57,7 +57,7 @@ class TravelAgentOrchestrator:
         await self.mcp_manager.stop()
 
     def _save_long_term_memory_if_needed(self, thread_id: str, message: str) -> None:
-        """Delegate long-term memory detection and persistence to ChatMemoryService."""
+        """Delega la detección y persistencia de memoria a largo plazo a ChatMemoryService."""
         ChatMemoryService.save_long_term_memory_if_needed(thread_id, message)
 
 
@@ -73,7 +73,7 @@ class TravelAgentOrchestrator:
             thread_id,
         )
 
-        # First, try to save the user message to history
+        # Primero, intentar guardar el mensaje del usuario en el historial
         try:
             save_message(thread_id, "user", message)
         except Exception as e:
@@ -84,7 +84,7 @@ class TravelAgentOrchestrator:
                 exc_info=True,
             )
 
-        # Global Guardrail: hybrid language + injection check (regex pre-filter + LLM)
+        # Guardarraíl global: verificación híbrida de idioma e inyección (prefiltro regex + LLM)
         lang_ok, is_safe, block_reason = await check_input_guardrail(message)
 
         if not lang_ok:
@@ -115,7 +115,7 @@ class TravelAgentOrchestrator:
                 "message": REJECTION_MESSAGE_INJECTION,
             }
 
-        # If both guardrails passed, extract/save long-term memory if needed
+        # Si ambos guardarraíles han pasado, extraer/guardar la memoria a largo plazo si es necesario
         try:
             self._save_long_term_memory_if_needed(thread_id, message)
         except Exception as e:
@@ -150,9 +150,9 @@ class TravelAgentOrchestrator:
                 message=message,
             )
 
-            # Remove the last message from history if it is the current user message
-            # that we already saved to the database. This prevents duplicating it
-            # in supervisor_messages.
+            # Eliminar el último mensaje del historial si es el mensaje actual del usuario
+            # que ya guardamos en la base de datos. Esto evita duplicarlo
+            # en supervisor_messages.
             supervisor_history = list(history)
             if supervisor_history and isinstance(supervisor_history[-1], HumanMessage):
                 supervisor_history.pop()
@@ -168,7 +168,7 @@ class TravelAgentOrchestrator:
 
                 final_message = MCPSchemaTranslator.extract_message(supervisor_text)
 
-                # Output integrity check
+                # Verificación de integridad de salida
                 is_output_safe, output_failure_reason = await check_output_integrity(final_message)
                 if not is_output_safe:
                     logger.warning("Output guardrail blocked supervisor response (reason='%s')", output_failure_reason)
@@ -200,7 +200,7 @@ class TravelAgentOrchestrator:
             responses = []
             last_agent_response = None
 
-            # Capture the starting snapshot of short-term memory once
+            # Capturar el snapshot inicial de memoria a corto plazo una sola vez
             short_term_memory_text = ChatMemoryService.format_persistent_memory(
                 thread_id,
                 limit=20,
@@ -213,7 +213,7 @@ class TravelAgentOrchestrator:
                 message=message,
             )
 
-            # Coroutine task to run a single route concurrently
+            # Tarea corrutina para ejecutar una ruta individual de forma concurrente
             async def run_single_route(route: str):
                 logger.info("Concurrent Routing: launching execution for sub-agent '%s'", route)
                 agent_res, out = await SubAgentExecutor.run_specialized_agent(
@@ -225,7 +225,7 @@ class TravelAgentOrchestrator:
                 )
                 ext = MCPSchemaTranslator.extract_message(out)
 
-                # Output integrity check for individual agent response
+                # Verificación de integridad de salida para la respuesta individual del agente
                 is_safe_out, fail_reason = await check_output_integrity(ext)
                 if not is_safe_out:
                     logger.warning("Output guardrail blocked agent response (reason='%s')", fail_reason)
@@ -236,11 +236,11 @@ class TravelAgentOrchestrator:
                     )
                 return agent_res, ext
 
-            # Run all tasks concurrently
+            # Ejecutar todas las tareas de forma concurrente
             tasks = [run_single_route(r) for r in routes]
             results = await asyncio.gather(*tasks)
 
-            # Persist responses sequentially to keep history in SQLite consistent
+            # Persistir las respuestas secuencialmente para mantener el historial de SQLite consistente
             for agent_response, extracted in results:
                 try:
                     save_message(thread_id, "assistant", extracted)

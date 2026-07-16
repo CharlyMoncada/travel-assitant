@@ -3,9 +3,9 @@ from .prompts import get_reminder_system_prompt
 
 def create_reminder_agent(llm, tools: list):
     """
-    Creates and compiles the sub-agent specialized in Reminders and Tasks.
-    The system prompt is generated at call time to inject the current datetime,
-    enabling accurate resolution of relative date expressions (e.g. 'mañana', 'in 3 days').
+    Crea y compila el subagente especializado en Recordatorios y Tareas.
+    El prompt del sistema se genera en el momento de la llamada para inyectar la fecha y hora actuales,
+    permitiendo la resolución precisa de expresiones de fecha relativas (ej. 'mañana', 'in 3 days').
     """
     return create_agent(
         llm,

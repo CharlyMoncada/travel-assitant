@@ -23,7 +23,7 @@ class GetPackingItemsSchema(BaseModel):
 
 def make_get_weather_coroutine():
     async def call_get_weather(city: str) -> str:
-        """Consults current weather for a city using the wttr.in public API."""
+        """Consulta el tiempo actual de una ciudad usando la API pública de wttr.in."""
         url = f"https://wttr.in/{quote(city)}?format=j1"
         try:
             async with httpx.AsyncClient(timeout=10) as client:
@@ -54,7 +54,7 @@ def make_get_weather_coroutine():
 
 def make_get_packing_items_coroutine():
     async def call_get_packing_items() -> str:
-        """Returns the default packing list from the bundled CSV file."""
+        """Retorna la lista de equipaje predeterminada del archivo CSV incluido."""
         try:
             items = []
             with open(_DATA_PATH, newline="", encoding="utf-8") as f:

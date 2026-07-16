@@ -6,7 +6,7 @@ def get_current_date_resolution_context() -> dict:
     current_datetime = now.strftime("%A, %d %B %Y at %H:%M")
     current_date_iso = now.strftime("%Y-%m-%d")
 
-    # Pre-compute common relative dates
+    # Precomputar fechas relativas comunes
     tomorrow = (now + timedelta(days=1)).strftime("%Y-%m-%d")
     day_after_tomorrow = (now + timedelta(days=2)).strftime("%Y-%m-%d")
     yesterday = (now - timedelta(days=1)).strftime("%Y-%m-%d")

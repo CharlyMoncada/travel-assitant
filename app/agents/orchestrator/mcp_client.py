@@ -11,7 +11,7 @@ from .mcp_schema import MCPSchemaTranslator, EmptySchema
 
 logger = logging.getLogger(__name__)
 
-MCP_TOOLS_CACHE_TTL = 300  # Cache TTL in seconds (5 minutes)
+MCP_TOOLS_CACHE_TTL = 300  # TTL de caché en segundos (5 minutos)
 
 
 class MCPConnectionManager:
