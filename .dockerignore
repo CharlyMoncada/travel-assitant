@@ -9,4 +9,5 @@ venv/
 .git/
 *.db
 *.sqlite3
+data/
 chromadb_store/
