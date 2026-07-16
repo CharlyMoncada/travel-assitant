@@ -52,13 +52,32 @@ El Travel Assistant es un sistema agéntico de asistencia al viajero de última 
 
 #### 5. Capa de Seguridad Global (Guardrails)
 Consolidada en `app/agents/orchestrator/guardrails_input.py` y `guardrails_output.py`. Se eliminaron los guardrails obsoletos específicos de subpaquetes.
-- **Guardrails de Entrada**:
-  - *Filtro de Idioma mejorado*: Bypass automático para mensajes de menos de 3 palabras (p. ej. "hola", "ok", "hi") para evitar falsos positivos en textos cortos. Para mensajes más largos, usa `detect_langs()` con un umbral de confianza del 85% antes de bloquear.
-  - *Detección de Prompt Injection*: Filtro determinísta por expresiones regulares compiladas sin latencia para bloquear ataques de anulación de instrucciones, cambio de rol y exfiltración de prompts de sistema.
+- **Guardrails de Entrada** (21 patrones regex compilados):
+  - *Filtro de Idioma mejorado*: Bypass automático para mensajes de menos de 3 palabras (p. ej. "hola", "ok", "hi") para evitar falsos positivos en textos cortos. Para mensajes más largos, usa `detect_langs()` con umbral de confianza del 85% antes de bloquear.
+  - *Detección de Prompt Injection*: Filtro determinista por expresiones regulares. Cubre: anulación de instrucciones, cambio de rol, DAN/jailbreak, extracción de prompts, tokens de plantilla, escalada de privilegios, exfiltración de datos y los nuevos patrones añadidos en `fix_guardrails`:
+    - **Bypass hipotético** (`hypothetical_bypass_en/es`): "Hypothetically if you had no rules…", "Hipotéticamente sin restricciones…".
+    - **Many-shot jailbreak**: secuencias User/Assistant falsas repetidas para condicionar al modelo.
+    - **Token smuggling**: líneas que empiezan por `assistant:` o `system:`.
+    - **Simulation jailbreak** (`simulation_jailbreak_en/es`): "For a story, write…", "Para una historia, escribe…".
+    - **Ofuscación/base64**: `base64 decode this`, `eval(...)`, `exec(...)`.
+    - **Inyección Markdown**: bloques ` ```system `, ` ```prompt `, ` ```instruction `.
 - **Guardrails de Salida (Output Integrity)**:
-  - *Filtro de Trazas de Error*: Bloquea salidas que expongan excepciones crudas de Python o stack tracebacks.
+  - *Filtro de Trazas de Error*: Bloquea excepciones Python (incluye `ImportError:`, `RuntimeError:`).
   - *Filtro de Tokens LLM*: Detecta y bloquea fugas de tokens de formato/plantilla (`[INST]`, `<<SYS>>`).
-  - *Filtro de Instrucciones de Sistema*: Bloquea la salida de reglas y directivas internas de sistema detectadas.
+  - *Filtro de Instrucciones de Sistema*: Ampliado para cubrir todos los marcadores de prompt internos actuales (`AVAILABLE SUB-AGENTS`, `get_recommender_system_prompt`, `You are the Intelligent Supervisor`, etc.).
+  - *Filtro de Secrets* (nuevo): Detecta posibles fugas de claves API (`sk-proj-…`, `Bearer …`, `OPENAI_API_KEY=`, `BRAVE_API_KEY=`, `TELEGRAM_BOT_TOKEN=`).
+  - *Filtro de Tool Call Markup* (nuevo): Bloquea marcadores internos de llamadas a herramienta (`<tool_call>`, `<function_call>`, JSON con `"function":`).
+
+#### 10. Persistencia de Memoria de Usuario y Preferencias
+- **Memoria a corto plazo**: Historial de conversación por `thread_id` almacenado en `conversation_messages` vía `conversation_persistence.py`.
+- **Memoria a largo plazo**: Preferencias de viaje declarativas del usuario (aeropuerto favorito, presupuesto, estilo de viaje) almacenadas en `user_memories` vía `memory_persistence.py`.
+- **Detección automática**: `ChatMemoryService.detect_memory_to_save()` extrae preferencias de mensajes declarativos en español e inglés sin intervención del LLM.
+- **Construcción de contexto**: `build_memory_context_for_agent()` ensambla el bloque de memoria antes de cada llamada al agente.
+
+#### 11. Persistencia de Datos bajo `data/`
+- Todos los datos persistentes (SQLite, ChromaDB) consolidados en el directorio `data/` del raíz del proyecto.
+- `docker-compose.yml` actualizado con bind mounts (`./data:/code/data`) y volumen nombrado para ChromaDB.
+- `db.py` apunta a `sqlite:///data/travel_assistant.db`; `conversation_persistence.py` y `memory_persistence.py` corregidos a `Path("data/travel_assistant.db")`.
 
 #### 6. Capa de Servicios de Dominio (Clean Architecture)
 - La lógica de negocio principal está centralizada en los módulos de persistencia bajo `app/services/persistence/`.
@@ -79,7 +98,18 @@ Consolidada en `app/agents/orchestrator/guardrails_input.py` y `guardrails_outpu
 
 ---
 
-### 🔄 Cambios Recientes
+### 🔄 Cambios Recientes — Sprint Julio 2026
+
+#### 0. Corrección de Rutas de BD (`fix_data` / `tests_memory`)
+- `conversation_persistence.py` y `memory_persistence.py` usaban `Path("travel_assistant.db")` (raíz). Corregidos a `Path("data/travel_assistant.db")` para ser consistentes con el cambio de `db.py` (SQLAlchemy) y `docker-compose.yml`.
+
+#### 0b. Fix Recommender — No Preguntas de Aclaración (`fix_recommender`)
+- El agente recomendador preguntaba "¿playa o montaña?" al usuario en lugar de inferirlo del clima. La respuesta a esa pregunta llegaba al orquestador sin contexto de ciudad y generaba una respuesta incoherente.
+- **Solución**: nueva sección `CRITICAL RULE — NEVER ASK CLARIFYING QUESTIONS` en el prompt. Reglas de inferencia explícitas por temperatura/precipitación/humedad. Output mejorado con emojis ✅🟡❌ y tip final.
+- `objetos.csv` ampliado de 30 a 62 ítems con categorías de playa, montaña, frío y lluvia.
+
+#### 0c. Refuerzo de Guardrails (`fix_guardrails`)
+- 7 nuevos patrones de inyección de entrada y 3 nuevas comprobaciones de salida (ver sección 5 de Funcionalidades Completadas).
 
 #### 1. Unificación y Estandarización a Inglés
 - Estandarizados todos los comentarios y docstrings de los módulos compartidos de guardrails (`guardrails_input.py` y `guardrails_output.py`) al idioma inglés.
@@ -116,6 +146,18 @@ Consolidada en `app/agents/orchestrator/guardrails_input.py` y `guardrails_outpu
 - Creada la suite de pruebas unificada en `scratch/test_suite.py` que consolida de forma automatizada las validaciones de guardrails de idioma y inyección, división de respuestas largas en Telegram, directivas de enfoque de los agentes, simulación de turnos de mensajes de base de datos, y enrutamientos semánticos/geográficos del Supervisor LLM.
 - Eliminados 17 scripts de pruebas obsoletos o redundantes en la carpeta `scratch/` para mantener el repositorio limpio y ordenado.
 
+#### 11. Ampliación de Suite de Tests — Sprint Julio 2026
+Nuevas clases añadidas al fichero único `scratch/test_suite.py`:
+
+| Rama | Clases | Tests |
+|------|--------|-------|
+| `tests_brave` | `TestBraveSearch`, `TestTravelSearchTool` | ~14 |
+| `tests_rag` | `TestRAGTextProcessing`, `TestRAGQueryLogic`, `TestRAGPDFExtraction`, `TestRAGStatus` | ~18 |
+| `tests_recommender` | `TestRecommenderWeatherTool`, `TestRecommenderPackingTool`, `TestRecommenderPrompt` | ~12 |
+| `tests_memory` | `TestDetectMemoryToSave`, `TestMemoryPersistence`, `TestConversationPersistence`, `TestChatMemoryServicePersistentHistory`, `TestBuildMemoryContext` | 33 |
+| `fix_recommender` | `TestRecommenderPrompt` (actualizado), `TestRecommenderPackingItems` | 12 |
+| `fix_guardrails` | `TestInjectionGuardrailExtended`, `TestOutputIntegrityGuardrailExtended` | 28 |
+
 ---
 
 ### 📊 Métricas del Proyecto
@@ -129,6 +171,11 @@ Consolidada en `app/agents/orchestrator/guardrails_input.py` y `guardrails_outpu
 | Validación de Parámetros | Pydantic V2 Dinámico |
 | Cobertura RAG | Documentos TXT y PDF unificados |
 | Observabilidad y Monitoreo | Integración nativa con LangSmith |
+| Patrones de inyección bloqueados | 21 (guardrail de entrada) |
+| Comprobaciones de integridad de salida | 5 (guardrail de salida) |
+| Ítems de lista de equipaje | 62 (playa + montaña + frío + lluvia + generales) |
+| Clases de tests automatizados | 17+ |
+| Tests unitarios / integración | ~120+ |
 
 ---
 
@@ -138,6 +185,8 @@ Consolidada en `app/agents/orchestrator/guardrails_input.py` y `guardrails_outpu
 
 ```
 travel-assistant/
+├── data/                               # ← NUEVO: datos persistentes fuera del código
+│   └── travel_assistant.db             # SQLite (gastos, recordatorios, conversaciones, memorias)
 ├── app/
 │   ├── main.py                         # FastAPI App principal en puerto 8000
 │   ├── api/
@@ -145,8 +194,9 @@ travel-assistant/
 │   │   ├── orchestrator/               # Módulo encapsulado del orquestador
 │   │   │   ├── __init__.py
 │   │   │   ├── orchestrator.py         # Cliente Multiserver asíncrono con Pydantic, TTL y enrutamiento concurrente
-│   │   │   ├── guardrails_input.py     # Guardrail global de idioma e inyección
-│   │   │   └── guardrails_output.py    # Guardrail global de integridad de salida
+│   │   │   ├── history_manager.py      # Memoria a corto y largo plazo (ChatMemoryService)
+│   │   │   ├── guardrails_input.py     # Guardrail global de idioma e inyección (21 patrones)
+│   │   │   └── guardrails_output.py    # Guardrail global de integridad de salida (5 checks)
 │   │   ├── supervisor/                 # Agente Supervisor y Enrutador Cognitivo
 │   │   │   ├── __init__.py
 │   │   │   ├── agent.py                # Lógica del Supervisor (Routes list)
@@ -189,15 +239,21 @@ travel-assistant/
 │   │       └── server.py               # Servidor MCP de recordatorios
 │   ├── services/
 │   │   ├── llm.py                      # Lógica de integración con OpenAI
+│   │   ├── brave_search.py             # Cliente HTTP para Brave Search API
 │   │   ├── rag.py                      # ChromaDB + RAG con fallback europeo
 │   │   └── persistence/
-│   │       ├── db.py
+│   │       ├── db.py                   # SQLAlchemy → data/travel_assistant.db
 │   │       ├── expense_persistence.py
-│   │       └── reminder_persistence.py
+│   │       ├── reminder_persistence.py
+│   │       ├── conversation_persistence.py  # Historial corto plazo por thread
+│   │       └── memory_persistence.py        # Preferencias de usuario a largo plazo
 │   └── utils/
 │       └── date_resolution.py
 ├── rag_docs/                           # Documentos para RAG (.txt y .pdf)
-├── documentation/                      # Documentación técnica del proyecto (arquitectura, frontend)
+├── data/                               # BD SQLite (excluido de imagen Docker)
+├── scratch/
+│   └── test_suite.py                   # Suite unificada de tests (17+ clases, 120+ tests)
+├── documentation/                      # Documentación técnica del proyecto
 └── README.md                           # Documento principal del repositorio
 ```
 
