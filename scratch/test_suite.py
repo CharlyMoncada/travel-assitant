@@ -1011,5 +1011,267 @@ class TestRecommenderPackingItems(unittest.TestCase):
         self.assertGreaterEqual(data["total"], 40)
 
 
+class TestBraveSearch(unittest.IsolatedAsyncioTestCase):
+    """Tests for app.services.brave_search — all HTTP calls are mocked with httpx."""
+
+    # ------------------------------------------------------------------ helpers
+    def _make_httpx_ok_response(self, data: dict):
+        """Build a mock httpx Response that returns data and does not raise."""
+        mock_resp = MagicMock()
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = data
+        return mock_resp
+
+    def _make_async_client_mock(self, response):
+        """Return a mock that behaves as `async with httpx.AsyncClient() as client`."""
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=response)
+        ctx_mock = MagicMock()
+        ctx_mock.__aenter__ = AsyncMock(return_value=mock_client)
+        ctx_mock.__aexit__ = AsyncMock(return_value=False)
+        return ctx_mock
+
+    # ------------------------------------------------------------------ availability
+    def test_is_brave_available_false_when_no_key(self):
+        from app.services.brave_search import is_brave_available
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value=None):
+            self.assertFalse(is_brave_available())
+
+    def test_is_brave_available_true_when_key_present(self):
+        from app.services.brave_search import is_brave_available
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"):
+            self.assertTrue(is_brave_available())
+
+    # ------------------------------------------------------------------ no API key
+    async def test_no_api_key_returns_error_dict(self):
+        from app.services.brave_search import brave_web_search
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value=None):
+            result = await brave_web_search("flights to Madrid")
+        self.assertIn("error", result)
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["query"], "flights to Madrid")
+
+    # ------------------------------------------------------------------ successful search
+    async def test_successful_search_returns_structured_result(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        fake_data = {
+            "web": {
+                "results": [
+                    {"title": "Vuelos Madrid", "url": "https://ex.com/1", "description": "Desc 1"},
+                    {"title": "Hoteles BCN",   "url": "https://ex.com/2", "description": "Desc 2"},
+                ]
+            }
+        }
+        ctx = self._make_async_client_mock(self._make_httpx_ok_response(fake_data))
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("vuelos a Madrid")
+
+        self.assertEqual(result["query"], "vuelos a Madrid")
+        self.assertEqual(len(result["results"]), 2)
+        self.assertEqual(result["total"], 2)
+        self.assertEqual(result["results"][0]["title"], "Vuelos Madrid")
+        self.assertEqual(result["results"][0]["url"], "https://ex.com/1")
+
+    async def test_successful_search_empty_web_results(self):
+        """API responds OK but returns no web results → empty list, no crash."""
+        from app.services.brave_search import brave_web_search
+
+        ctx = self._make_async_client_mock(self._make_httpx_ok_response({}))
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("algo raro")
+
+        self.assertEqual(result["results"], [])
+        self.assertEqual(result["total"], 0)
+        self.assertNotIn("error", result)
+
+    # ------------------------------------------------------------------ error handling
+    async def test_timeout_returns_error_dict(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timeout"))
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("vuelos Madrid")
+
+        self.assertIn("error", result)
+        self.assertEqual(result["results"], [])
+        self.assertIn("timed out", result["error"].lower())
+
+    async def test_http_401_returns_error_dict(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 401
+        mock_resp.text = "Unauthorized"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            message="401 Unauthorized",
+            request=MagicMock(),
+            response=mock_resp,
+        )
+
+        ctx = self._make_async_client_mock(mock_resp)
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="bad-key"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("hoteles Barcelona")
+
+        self.assertIn("error", result)
+        self.assertIn("401", result["error"])
+        self.assertEqual(result["results"], [])
+
+    async def test_http_429_returns_error_dict(self):
+        import httpx
+        from app.services.brave_search import brave_web_search
+
+        mock_resp = MagicMock()
+        mock_resp.status_code = 429
+        mock_resp.text = "Too Many Requests"
+        mock_resp.raise_for_status.side_effect = httpx.HTTPStatusError(
+            message="429 Too Many Requests",
+            request=MagicMock(),
+            response=mock_resp,
+        )
+
+        ctx = self._make_async_client_mock(mock_resp)
+
+        with unittest.mock.patch("app.services.brave_search.get_brave_api_key", return_value="sk-test"), \
+             unittest.mock.patch("app.services.brave_search.httpx.AsyncClient", return_value=ctx):
+            result = await brave_web_search("hoteles Madrid")
+
+        self.assertIn("error", result)
+        self.assertIn("429", result["error"])
+
+    # ------------------------------------------------------------------ formatter
+    def test_format_search_results_for_llm_returns_valid_json(self):
+        import json as _json
+        from app.services.brave_search import format_search_results_for_llm
+
+        data = {
+            "query": "vuelos Madrid",
+            "results": [
+                {"title": "Flight 1", "url": "https://a.com", "description": "Desc"},
+            ],
+            "total": 1,
+        }
+        output = format_search_results_for_llm(data)
+        parsed = _json.loads(output)
+        self.assertEqual(parsed["query"], "vuelos Madrid")
+        self.assertEqual(parsed["total"], 1)
+        self.assertEqual(parsed["results"][0]["title"], "Flight 1")
+
+    def test_format_search_results_for_llm_with_error_dict(self):
+        import json as _json
+        from app.services.brave_search import format_search_results_for_llm
+
+        data = {"query": "test", "results": [], "error": "BRAVE_API_KEY not configured."}
+        output = format_search_results_for_llm(data)
+        parsed = _json.loads(output)
+        self.assertIn("error", parsed)
+        self.assertEqual(parsed["results"], [])
+
+    def test_format_search_results_preserves_non_ascii(self):
+        import json as _json
+        from app.services.brave_search import format_search_results_for_llm
+
+        data = {"query": "viaje España", "results": [{"title": "Viaje a España", "url": "", "description": ""}], "total": 1}
+        output = format_search_results_for_llm(data)
+        self.assertIn("España", output)  # ensure_ascii=False preserved
+
+
+class TestTravelSearchTool(unittest.IsolatedAsyncioTestCase):
+    """Tests for the travel_search LangChain tool wrapper in general/tools.py."""
+
+    async def test_short_query_appends_travel_keyword(self):
+        """Queries with fewer than 4 words get ' travel' appended before the Brave call."""
+        import json as _json
+        captured = {}
+
+        async def mock_search(query, **kwargs):
+            captured["query"] = query
+            return {"query": query, "results": [], "total": 0}
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            await fn("Madrid vuelos")  # 2 words → must append ' travel'
+
+        self.assertEqual(captured["query"], "Madrid vuelos travel")
+
+    async def test_query_of_three_words_appends_travel(self):
+        captured = {}
+
+        async def mock_search(query, **kwargs):
+            captured["query"] = query
+            return {"query": query, "results": [], "total": 0}
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            await fn("vuelos a Madrid")  # exactly 3 words → must append
+
+        self.assertEqual(captured["query"], "vuelos a Madrid travel")
+
+    async def test_long_query_not_modified(self):
+        """Queries with 4+ words are passed unchanged."""
+        captured = {}
+
+        async def mock_search(query, **kwargs):
+            captured["query"] = query
+            return {"query": query, "results": [], "total": 0}
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            await fn("vuelos baratos Madrid Barcelona Sevilla")  # 5 words
+
+        self.assertEqual(captured["query"], "vuelos baratos Madrid Barcelona Sevilla")
+
+    async def test_no_api_key_returns_warning_json(self):
+        """When Brave is unavailable, tool returns a warning JSON without crashing."""
+        import json as _json
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=False):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            output = await fn("vuelos a Roma")
+
+        parsed = _json.loads(output)
+        self.assertIn("warning", parsed)
+        self.assertEqual(parsed["results"], [])
+        self.assertEqual(parsed["query"], "vuelos a Roma")
+
+    async def test_brave_exception_returns_error_json(self):
+        """If brave_web_search raises unexpectedly, tool catches it and returns JSON error."""
+        import json as _json
+
+        async def mock_search_crash(query, **kwargs):
+            raise RuntimeError("unexpected network failure")
+
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search_crash):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            output = await fn("vuelos a París")
+
+        parsed = _json.loads(output)
+        self.assertIn("error", parsed)
+
+
 if __name__ == "__main__":
     unittest.main()
