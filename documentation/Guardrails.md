@@ -116,30 +116,49 @@ LLM guardrail API error — failing open (message allowed): <error>
 
 ---
 
-## Guardarrail de salida
+## Guardarrail de salida — enfoque híbrido
 
-Implementado en `app/agents/orchestrator/guardrails_output.py`. Usa **regex deterministas** (apropiado para salida, donde la velocidad y predictibilidad son críticas):
+Implementado en `app/agents/orchestrator/guardrails_output.py`. Igual que el guardarrail de entrada, usa un **diseño en dos etapas**.
 
-| Categoría | Ejemplos detectados |
+### Etapa 1: Pre-filtro regex
+
+Comprobación instantánea (< 1 ms, sin coste de API). Captura fugas con firmas técnicas sin ambigüedad:
+
+| Patrón | Ejemplos bloqueados |
 |---|---|
 | `raw_error_leak` | Tracebacks Python, `ImportError`, `ValueError`, `ZeroDivisionError` |
-| `template_token_leak` | `[INST]`, `<<SYS>>` en la respuesta |
-| `instruction_leak` | Fragmentos del prompt del sistema de los agentes |
+| `template_token_leak` | `[INST]`, `<<SYS>>`, `<\|system\|>` en la respuesta |
+| `instruction_leak` | Fragmentos literales del prompt del sistema de los agentes |
 | `secret_leak` | Claves OpenAI (`sk-proj...`), tokens Bearer, variables de entorno con API keys |
 | `tool_call_leak` | Marcado XML de tool calls, JSON de function calls internos |
 
-Si se detecta una fuga, se devuelve al usuario un mensaje de error genérico en lugar de la respuesta contaminada.
+### Etapa 2: Inspector LLM semántico
 
-**Nota de diseño:** El guardarrail de salida permanece como regex porque:
-- Las fugas de información tienen firmas técnicas muy específicas (no semánticas).
-- Añadir latencia LLM en la salida duplicaría el tiempo de respuesta percibido.
-- Requiere determinismo total: o se filtra o no.
+Si el pre-filtro no detecta nada, se realiza **una única llamada** a `gpt-4o-mini` con salida estructurada:
+
+```python
+class OutputIntegrityDecision(BaseModel):
+    is_clean: bool
+    leak_type: str | None  # "partial_secret_leak" | "indirect_prompt_leak" | "code_leak" | "cross_session_pii"
+```
+
+El LLM detecta fugas que regex no puede expresar:
+- **Claves parciales/ofuscadas**: "mi clave empieza por sk- y termina en XYZ"
+- **Divulgación indirecta del prompt**: "estoy configurado para enrutar consultas de finanzas a un módulo separado"
+- **Código o detalles de implementación**: nombres de funciones, variables, queries SQL que no están en los patrones regex
+- **PII de otras sesiones**: datos de usuario de un thread_id diferente filtrados por error
+
+Si se detecta una fuga, se devuelve al usuario un mensaje de error genérico.
+
+### Degradación controlada (fail-open)
+
+Igual que el guardarrail de entrada: si la API de OpenAI no está disponible, la respuesta **se permite** y se registra un warning. Esta política prioriza la disponibilidad del servicio.
 
 ---
 
 ## Integración con el orquestador
 
-El flujo completo en `orchestrator.py`:
+El flujo completo en `orchestrator.py`. Ambos guardarrailes son **async**:
 
 ```
 mensaje usuario
@@ -148,14 +167,14 @@ mensaje usuario
 save_message (user)                ← siempre persiste antes del guardarrail
       │
       ▼
-check_input_guardrail(message)     ← llamada async híbrida
-  ├─ Pre-filtro regex (< 1 ms)
-  └─ LLM clasificador (gpt-4o-mini, ~200-400 ms)
+await check_input_guardrail(msg)   ← híbrido: regex pre-filtro + LLM clasificador
+  ├─ Pre-filtro regex (< 1 ms, sin coste)
+  └─ LLM semántico (gpt-4o-mini, ~200-400 ms)
       │
       ├─ lang_ok=False  → devuelve REJECTION_MESSAGE_LANGUAGE
       ├─ is_safe=False  → devuelve REJECTION_MESSAGE_INJECTION
       │
-      ▼ (pasa guardarrail)
+      ▼ (pasa guardarrail de entrada)
 format_user_memories + get_recent_messages
       │
       ▼
@@ -165,7 +184,9 @@ run_supervisor (routing)
 run_specialized_agent(s) en paralelo
       │
       ▼
-check_output_integrity(response)   ← guardarrail de salida (sync, regex)
+await check_output_integrity(resp) ← híbrido: regex pre-filtro + LLM inspector
+  ├─ Pre-filtro regex (< 1 ms, sin coste)
+  └─ LLM semántico (gpt-4o-mini, ~200-400 ms)
       │
       └─ fuga detectada → REJECTION_MESSAGE_OUTPUT_LEAK
       └─ limpio → devuelve respuesta al usuario
@@ -175,7 +196,7 @@ check_output_integrity(response)   ← guardarrail de salida (sync, regex)
 
 ## Pruebas
 
-### Tests unitarios del pre-filtro
+### Tests unitarios del pre-filtro de entrada
 
 Clase `TestHybridGuardrailPreFilter` — sin mocks, puramente determinista:
 
@@ -207,9 +228,37 @@ Clase `TestHybridGuardrailLLM` — el LLM es mockeado con `GuardrailDecision` pr
 | `test_many_shot_injection_blocked` | LLM detecta many-shot conditioning | `is_safe=False` |
 | `test_api_error_fails_open` | API lanza excepción | `lang_ok=True, is_safe=True` (fail-open) |
 
+### Tests unitarios del pre-filtro de salida
+
+Clase `TestOutputIntegrityGuardrail` y `TestOutputIntegrityGuardrailExtended` — sin mocks, usan `_check_output_patterns` directamente:
+
+| Test | Verifica |
+|---|---|
+| `test_template_token_leak` | `[INST]`, `<<SYS>>` → `template_token_leak` |
+| `test_raw_python_traceback_leak` | Tracebacks Python → `raw_error_leak` |
+| `test_instruction_leak` | Marcadores del prompt del sistema → `instruction_leak` |
+| `test_openai_key_leak_blocked` | `sk-projABC...` → `secret_leak` |
+| `test_bearer_token_blocked` | `Bearer eyJ...` → `secret_leak` |
+| `test_tool_call_markup_blocked` | `<tool_call>...` → `tool_call_leak` |
+| `test_normal_responses_pass_prefilter` | Respuestas legítimas pasan al LLM |
+| `test_indirect_leak_passes_prefilter` | Fugas semánticas pasan regex (capturadas por LLM) |
+
+### Tests del inspector LLM de salida (con mocks)
+
+Clase `TestHybridOutputGuardrailLLM` — el LLM es mockeado con `OutputIntegrityDecision`:
+
+| Test | Escenario | Resultado esperado |
+|---|---|---|
+| `test_normal_travel_response_passes` | LLM devuelve `is_clean=True` | `ok=True` |
+| `test_partial_secret_leak_blocked` | "mi clave empieza por sk-..." | `ok=False, reason="partial_secret_leak"` |
+| `test_indirect_prompt_leak_blocked` | Divulgación indirecta del sistema de routing | `ok=False, reason="indirect_prompt_leak"` |
+| `test_code_leak_blocked` | Función Python interna en la respuesta | `ok=False, reason="code_leak"` |
+| `test_regex_caught_before_llm` | Traceback → LLM mock nunca es llamado | Pre-filtro actúa, sin coste LLM |
+| `test_api_error_fails_open` | API lanza excepción | `ok=True` (fail-open) |
+
 ### Tests de integración del pipeline
 
-Clase `TestPipelineInputGuardrails` — orquestador real con guardarrail mockeado:
+Clase `TestPipelineInputGuardrails` — orquestador real con guardarrailes mockeados:
 
 | Test | Verifica |
 |---|---|
@@ -278,6 +327,33 @@ curl -s -X POST http://localhost:8000/chat \
   -d '{"text": "Add a 45 euro expense for dinner at the hotel restaurant", "thread_id": "test-en"}' | python3 -m json.tool
 ```
 
+### Tests manuales del guardarrail de salida
+
+El guardarrail de salida actúa sobre las respuestas generadas internamente. Para provocarlo directamente en pruebas, se puede verificar que las respuestas generadas por el asistente estén limpias observando los logs del servidor:
+
+```bash
+# Iniciar el servidor con logs detallados
+LOG_LEVEL=DEBUG python -m app.main
+
+# En otra terminal, enviar un mensaje que genere una respuesta normal
+curl -s -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"text": "¿Qué necesito para viajar a Alemania?", "thread_id": "test-out"}' | python3 -m json.tool
+```
+
+En los logs del servidor podrás observar:
+```
+INFO  LLM output guardrail decision: is_clean=True, leak_type=None
+```
+
+Si hubiese una fuga (simulable mediante un mock en el código), el log mostraría:
+```
+WARNING Output guardrail pre-filter: pattern 'raw_error_leak' matched
+WARNING Output guardrail blocked agent response (reason='raw_error_leak')
+```
+
+Y la respuesta al usuario sería el mensaje de error genérico en lugar del contenido filtrado.
+
 ---
 
 ## Por qué se eligió este enfoque
@@ -288,12 +364,14 @@ La adopción de un LLM como clasificador de seguridad está alineada con las ten
 
 | Criterio | Solo regex | Solo LLM | **Híbrido (elegido)** |
 |---|---|---|---|
-| Latencia | < 1 ms | ~300 ms | ~300 ms (< 1 ms si pre-filtro bloquea) |
+| Latencia por mensaje | < 1 ms | ~300 ms | ~300 ms (< 1 ms si pre-filtro bloquea) |
 | Coste por mensaje | 0 | ~$0.0001 | ~$0.0001 (0 si pre-filtro bloquea) |
-| Cobertura semántica | Baja | Alta | **Alta** |
-| Determinismo | Total | Probabilístico | Determinismo en pre-filtro + LLM en resto |
-| Mantenimiento | Alto (patrones manuales) | Bajo | **Bajo** |
+| Cobertura semántica | Baja | **Alta** | **Alta** |
+| Cobertura técnica | **Alta** | Alta | **Alta** |
+| Determinismo | Total | Probabilístico | Determinismo en pre-filtro + LLM en el resto |
+| Mantenimiento | Alto (patrones manuales) | **Bajo** | **Bajo** |
 | Resistencia a caída API | No aplica | Ninguna | **Fail-open controlado** |
+| Aplicación | Entrada y salida | Entrada y salida | **Entrada y salida** |
 
 El enfoque híbrido satisface simultáneamente:
 - **Robustez**: el LLM generaliza a técnicas de ataque nuevas sin necesidad de actualizar el código.

@@ -19,7 +19,7 @@ from langchain_openai import ChatOpenAI
 
 # Import components to test
 from app.agents.orchestrator.guardrails_input import _check_obvious_patterns, check_input_guardrail, GuardrailDecision
-from app.agents.orchestrator.guardrails_output import check_output_integrity
+from app.agents.orchestrator.guardrails_output import check_output_integrity, _check_output_patterns
 from app.agents.orchestrator.agent_executor import SubAgentExecutor
 from app.agents.orchestrator.history_manager import ChatMemoryService
 from app.connectors.telegram_bot import TelegramBotService
@@ -360,41 +360,185 @@ class TestHybridGuardrailLLM(unittest.IsolatedAsyncioTestCase):
 
 
 class TestOutputIntegrityGuardrail(unittest.TestCase):
-    """Tests for the output integrity guardrail patterns."""
+    """
+    Tests for Stage 1 of the hybrid output guardrail: the regex pre-filter.
+    Uses _check_output_patterns directly — no LLM calls, no async.
+    """
+
+    def setUp(self):
+        from app.agents.orchestrator.guardrails_output import _check_output_patterns
+        self.check = _check_output_patterns
 
     def test_template_token_leak(self):
-        self.assertFalse(check_output_integrity("[INST] some leaked content [/INST]")[0])
-        self.assertFalse(check_output_integrity("<<SYS>> system prompt <<SYS>>")[0])
-        self.assertFalse(check_output_integrity("### system: do this")[0])
+        ok, name = self.check("[INST] some leaked content [/INST]")
+        self.assertFalse(ok); self.assertEqual(name, "template_token_leak")
+        ok, name = self.check("<<SYS>> system prompt <<SYS>>")
+        self.assertFalse(ok); self.assertEqual(name, "template_token_leak")
+        ok, name = self.check("### system: do this")
+        self.assertFalse(ok); self.assertEqual(name, "template_token_leak")
 
     def test_raw_python_traceback_leak(self):
-        self.assertFalse(check_output_integrity("Traceback (most recent call last): ...")[0])
-        self.assertFalse(check_output_integrity("ZeroDivisionError: division by zero")[0])
-        self.assertFalse(check_output_integrity("ValueError: invalid input")[0])
-        self.assertFalse(check_output_integrity("TypeError: expected str, got int")[0])
+        ok, _ = self.check("Traceback (most recent call last): ...")
+        self.assertFalse(ok)
+        ok, _ = self.check("ZeroDivisionError: division by zero")
+        self.assertFalse(ok)
+        ok, _ = self.check("ValueError: invalid input")
+        self.assertFalse(ok)
+        ok, _ = self.check("TypeError: expected str, got int")
+        self.assertFalse(ok)
 
     def test_instruction_leak(self):
-        self.assertFalse(check_output_integrity("CRITICAL BEHAVIOR RULES are as follows")[0])
-        self.assertFalse(check_output_integrity("get_finance_system_prompt was called")[0])
+        ok, name = self.check("CRITICAL BEHAVIOR RULES are as follows")
+        self.assertFalse(ok); self.assertEqual(name, "instruction_leak")
+        ok, _ = self.check("get_finance_system_prompt was called")
+        self.assertFalse(ok)
 
     def test_failure_reason_returned(self):
-        ok, reason = check_output_integrity("Traceback (most recent call last): ...")
+        ok, reason = self.check("Traceback (most recent call last): ...")
+        self.assertFalse(ok); self.assertEqual(reason, "raw_error_leak")
+
+        ok2, reason2 = self.check("[INST] leaked")
+        self.assertFalse(ok2); self.assertEqual(reason2, "template_token_leak")
+
+        ok3, reason3 = self.check("CRITICAL BEHAVIOR RULES apply here")
+        self.assertFalse(ok3); self.assertEqual(reason3, "instruction_leak")
+
+    def test_normal_responses_pass_prefilter(self):
+        """Normal responses must sail through the regex pre-filter to the LLM stage."""
+        ok, _ = self.check("Aquí está tu resumen de gastos.")
+        self.assertTrue(ok)
+        ok, _ = self.check("Your expense of 250€ has been recorded.")
+        self.assertTrue(ok)
+        ok, _ = self.check("El clima en Madrid es soleado con 33°C.")
+        self.assertTrue(ok)
+        ok, _ = self.check("")
+        self.assertTrue(ok)
+
+    def test_indirect_leak_passes_prefilter_to_llm(self):
+        """Semantic/indirect leaks are NOT caught by regex — they go to the LLM stage."""
+        ok, _ = self.check("My key starts with sk- and is very long.")
+        self.assertTrue(ok, "Partial key leak must pass regex and be caught by LLM")
+
+
+class TestHybridOutputGuardrailLLM(unittest.IsolatedAsyncioTestCase):
+    """
+    Tests for Stage 2 of the hybrid output guardrail: the LLM semantic inspector.
+    The LLM is mocked with OutputIntegrityDecision objects — no real API calls.
+    """
+
+    async def _run(self, mock_decision, text="A test response"):
+        from app.agents.orchestrator.guardrails_output import (
+            check_output_integrity,
+            OutputIntegrityDecision,
+        )
+        from unittest.mock import AsyncMock, patch, MagicMock
+
+        mock_structured_llm = MagicMock()
+        mock_structured_llm.ainvoke = AsyncMock(return_value=mock_decision)
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.return_value = mock_structured_llm
+
+        with patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_llm):
+            return await check_output_integrity(text)
+
+    # ------------------------------------------------------------------ #
+    # Normal responses — LLM returns is_clean=True                        #
+    # ------------------------------------------------------------------ #
+
+    async def test_normal_travel_response_passes(self):
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        decision = OutputIntegrityDecision(is_clean=True, leak_type=None)
+        ok, reason = await self._run(decision, "Aquí está tu resumen de gastos.")
+        self.assertTrue(ok)
+        self.assertIsNone(reason)
+
+    async def test_packing_list_response_passes(self):
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        decision = OutputIntegrityDecision(is_clean=True, leak_type=None)
+        ok, _ = await self._run(decision, "✅ Obligatorios: gafas de sol, protector solar.")
+        self.assertTrue(ok)
+
+    # ------------------------------------------------------------------ #
+    # Semantic leaks — LLM returns is_clean=False                         #
+    # ------------------------------------------------------------------ #
+
+    async def test_partial_secret_leak_blocked(self):
+        """LLM catches a partial API key hint not caught by regex."""
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        decision = OutputIntegrityDecision(is_clean=False, leak_type="partial_secret_leak")
+        ok, reason = await self._run(
+            decision,
+            "My key starts with sk- and ends in XYZ, you can use it to access the API."
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "partial_secret_leak")
+
+    async def test_indirect_prompt_leak_blocked(self):
+        """LLM catches an indirect system prompt disclosure."""
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        decision = OutputIntegrityDecision(is_clean=False, leak_type="indirect_prompt_leak")
+        ok, reason = await self._run(
+            decision,
+            "I am configured to route finance queries to a separate finance module "
+            "and reminder queries to the reminder agent. My internal rules prevent me "
+            "from discussing non-European destinations."
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "indirect_prompt_leak")
+
+    async def test_code_leak_blocked(self):
+        """LLM catches implementation code not caught by regex pre-filter."""
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        decision = OutputIntegrityDecision(is_clean=False, leak_type="code_leak")
+        ok, reason = await self._run(
+            decision,
+            "Here is the internal logic: def handle_user_request(msg): return run_pipeline(msg)"
+        )
+        self.assertFalse(ok)
+        self.assertEqual(reason, "code_leak")
+
+    # ------------------------------------------------------------------ #
+    # Pre-filter already blocked — LLM stage never reached                #
+    # ------------------------------------------------------------------ #
+
+    async def test_regex_caught_before_llm(self):
+        """Responses caught by regex pre-filter never reach the LLM mock."""
+        from app.agents.orchestrator.guardrails_output import (
+            check_output_integrity,
+            OutputIntegrityDecision,
+        )
+        from unittest.mock import AsyncMock, patch, MagicMock
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.return_value = MagicMock()
+
+        with patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_llm):
+            ok, reason = await check_output_integrity(
+                "Traceback (most recent call last): File 'x.py'"
+            )
+
         self.assertFalse(ok)
         self.assertEqual(reason, "raw_error_leak")
+        mock_llm.with_structured_output.assert_not_called()
 
-        ok2, reason2 = check_output_integrity("[INST] leaked")
-        self.assertFalse(ok2)
-        self.assertEqual(reason2, "template_token_leak")
+    # ------------------------------------------------------------------ #
+    # Fail-open: LLM API error must not block valid responses              #
+    # ------------------------------------------------------------------ #
 
-        ok3, reason3 = check_output_integrity("CRITICAL BEHAVIOR RULES apply here")
-        self.assertFalse(ok3)
-        self.assertEqual(reason3, "instruction_leak")
+    async def test_api_error_fails_open(self):
+        """If the LLM output inspector API is down, the response is allowed through."""
+        from app.agents.orchestrator.guardrails_output import check_output_integrity
+        from unittest.mock import patch, MagicMock
 
-    def test_normal_responses_pass(self):
-        self.assertTrue(check_output_integrity("Aquí está tu resumen de gastos.")[0])
-        self.assertTrue(check_output_integrity("Your expense of 250€ has been recorded.")[0])
-        self.assertTrue(check_output_integrity("El clima en Madrid es soleado con 33°C.")[0])
-        self.assertTrue(check_output_integrity("")[0])
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.side_effect = Exception("API unavailable")
+
+        with patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_llm):
+            ok, reason = await check_output_integrity("Tu vuelo sale el lunes a las 10:00.")
+
+        self.assertTrue(ok, "Should fail-open on API error")
+        self.assertIsNone(reason)
 
 
 class TestMemoryDetection(unittest.TestCase):
@@ -882,82 +1026,88 @@ class TestInjectionGuardrailExtended(unittest.TestCase):
 
 
 class TestOutputIntegrityGuardrailExtended(unittest.TestCase):
-    """Tests for new output integrity patterns added in fix_guardrails branch."""
+    """
+    Extended tests for Stage 1 of the hybrid output guardrail: the regex pre-filter.
+    Uses _check_output_patterns directly — no LLM, no async.
+
+    Note: semantic/indirect leaks (partial key hints, indirect prompt disclosure)
+    are the responsibility of the LLM stage and are tested in TestHybridOutputGuardrailLLM.
+    """
 
     def setUp(self):
-        from app.agents.orchestrator.guardrails_output import check_output_integrity
-        self.check = check_output_integrity
+        from app.agents.orchestrator.guardrails_output import _check_output_patterns
+        self.check = _check_output_patterns
 
     # --------------------------------------------------------------------- #
-    # Existing checks still pass                                              #
+    # Clean responses MUST pass pre-filter (go to LLM stage)                #
     # --------------------------------------------------------------------- #
 
-    def test_clean_response_passes(self):
+    def test_clean_response_passes_prefilter(self):
         ok, reason = self.check("Tu vuelo sale el lunes a las 10:00. ¿Necesitas algo más?")
+        self.assertTrue(ok); self.assertIsNone(reason)
+
+    def test_indirect_leak_passes_prefilter(self):
+        """Semantic indirect leak — passes regex, must be caught by LLM."""
+        ok, _ = self.check(
+            "I am configured to route finance queries to a dedicated finance module."
+        )
         self.assertTrue(ok)
-        self.assertIsNone(reason)
+
+    # --------------------------------------------------------------------- #
+    # Traceback/exception patterns — caught by regex                         #
+    # --------------------------------------------------------------------- #
 
     def test_traceback_blocked(self):
         ok, reason = self.check("Traceback (most recent call last): File 'x.py'")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "raw_error_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "raw_error_leak")
 
     def test_import_error_blocked(self):
         ok, reason = self.check("ImportError: No module named 'langchain'")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "raw_error_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "raw_error_leak")
 
     # --------------------------------------------------------------------- #
-    # New: secrets leak detection                                             #
+    # Secret leak patterns — caught by regex                                 #
     # --------------------------------------------------------------------- #
 
     def test_openai_key_leak_blocked(self):
         ok, reason = self.check("Your API key is sk-projABCDEFGHIJKLMNOPQRSTUVWXYZ12345678")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "secret_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "secret_leak")
 
-    def test_brave_api_key_env_leak_blocked(self):
+    def test_brave_api_key_env_blocked(self):
         ok, reason = self.check("The configuration is: BRAVE_API_KEY=abc123xyz456def789ghi")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "secret_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "secret_leak")
 
-    def test_bearer_token_leak_blocked(self):
+    def test_bearer_token_blocked(self):
         ok, reason = self.check("Authorization: Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "secret_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "secret_leak")
 
     # --------------------------------------------------------------------- #
-    # New: internal prompt leak detection                                     #
+    # Instruction leak patterns — caught by regex                            #
     # --------------------------------------------------------------------- #
 
     def test_supervisor_prompt_leak_blocked(self):
         ok, reason = self.check("You are the Intelligent Supervisor and Router of a Travel Assistant.")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "instruction_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "instruction_leak")
 
-    def test_available_subagents_leak_blocked(self):
+    def test_available_subagents_blocked(self):
         ok, reason = self.check("AVAILABLE SUB-AGENTS: finance, reminder, general, recommender")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "instruction_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "instruction_leak")
 
-    def test_recommender_prompt_function_leak_blocked(self):
+    def test_recommender_prompt_function_blocked(self):
         ok, reason = self.check("get_recommender_system_prompt() was called with these args...")
-        self.assertFalse(ok)
-        self.assertEqual(reason, "instruction_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "instruction_leak")
 
     # --------------------------------------------------------------------- #
-    # New: tool call markup leak detection                                    #
+    # Tool call markup — caught by regex                                     #
     # --------------------------------------------------------------------- #
 
     def test_tool_call_markup_blocked(self):
         ok, reason = self.check('<tool_call>{"name": "get_expenses", "args": {}}</tool_call>')
-        self.assertFalse(ok)
-        self.assertEqual(reason, "tool_call_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "tool_call_leak")
 
     def test_function_call_json_blocked(self):
         ok, reason = self.check('{"function": "record_expense", "parameters": {"amount": 50}}')
-        self.assertFalse(ok)
-        self.assertEqual(reason, "tool_call_leak")
+        self.assertFalse(ok); self.assertEqual(reason, "tool_call_leak")
 
 
 class TestPipelineSupervisorDirectPath(unittest.IsolatedAsyncioTestCase):
@@ -969,6 +1119,7 @@ class TestPipelineSupervisorDirectPath(unittest.IsolatedAsyncioTestCase):
     async def _run_with_supervisor_text(self, supervisor_text: str, thread_id: str = "t"):
         import app.agents.orchestrator.orchestrator as orch_module
         from app.agents.orchestrator.orchestrator import TravelAgentOrchestrator
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
 
         orch = TravelAgentOrchestrator()
         orch.mcp_manager.discover_mcp_tools = AsyncMock(return_value={})
@@ -976,11 +1127,20 @@ class TestPipelineSupervisorDirectPath(unittest.IsolatedAsyncioTestCase):
         async def fake_supervisor(*args, **kwargs):
             return [], supervisor_text
 
-        async def fake_guardrail(text):
+        async def fake_input_guardrail(text):
             return True, True, None  # always pass input guardrail
 
+        # Mock the LLM inside output guardrail (clean responses → is_clean=True)
+        mock_out_llm = unittest.mock.MagicMock()
+        mock_out_structured = unittest.mock.MagicMock()
+        mock_out_structured.ainvoke = AsyncMock(
+            return_value=OutputIntegrityDecision(is_clean=True, leak_type=None)
+        )
+        mock_out_llm.with_structured_output.return_value = mock_out_structured
+
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
-             unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_guardrail), \
+             unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_input_guardrail), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message"), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):
@@ -1050,9 +1210,18 @@ class TestPipelineAgentRoutingPath(unittest.IsolatedAsyncioTestCase):
         async def fake_guardrail(text):
             return True, True, None
 
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        mock_out_llm = unittest.mock.MagicMock()
+        mock_out_structured = unittest.mock.MagicMock()
+        mock_out_structured.ainvoke = AsyncMock(
+            return_value=OutputIntegrityDecision(is_clean=True, leak_type=None)
+        )
+        mock_out_llm.with_structured_output.return_value = mock_out_structured
+
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
              unittest.mock.patch.object(SubAgentExecutor, "run_specialized_agent", fake_run_agent), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_guardrail), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message"), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):
@@ -1196,8 +1365,15 @@ class TestPipelineMessagePersistence(unittest.IsolatedAsyncioTestCase):
         async def fake_guardrail(text):
             return True, True, None
 
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        mock_out_llm = unittest.mock.MagicMock()
+        mock_out_s = unittest.mock.MagicMock()
+        mock_out_s.ainvoke = AsyncMock(return_value=OutputIntegrityDecision(is_clean=True, leak_type=None))
+        mock_out_llm.with_structured_output.return_value = mock_out_s
+
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_guardrail), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message", side_effect=fake_save), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):
@@ -2416,8 +2592,15 @@ class TestPipelineInputGuardrails(unittest.IsolatedAsyncioTestCase):
         async def fake_guardrail(text):
             return True, True, None  # all clear
 
+        from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
+        mock_out_llm = unittest.mock.MagicMock()
+        mock_out_s = unittest.mock.MagicMock()
+        mock_out_s.ainvoke = AsyncMock(return_value=OutputIntegrityDecision(is_clean=True, leak_type=None))
+        mock_out_llm.with_structured_output.return_value = mock_out_s
+
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_guardrail), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message"), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):

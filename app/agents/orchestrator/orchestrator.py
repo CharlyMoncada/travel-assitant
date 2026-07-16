@@ -169,7 +169,7 @@ class TravelAgentOrchestrator:
                 final_message = MCPSchemaTranslator.extract_message(supervisor_text)
 
                 # Output integrity check
-                is_output_safe, output_failure_reason = check_output_integrity(final_message)
+                is_output_safe, output_failure_reason = await check_output_integrity(final_message)
                 if not is_output_safe:
                     logger.warning("Output guardrail blocked supervisor response (reason='%s')", output_failure_reason)
                     final_message = (
@@ -226,7 +226,7 @@ class TravelAgentOrchestrator:
                 ext = MCPSchemaTranslator.extract_message(out)
 
                 # Output integrity check for individual agent response
-                is_safe_out, fail_reason = check_output_integrity(ext)
+                is_safe_out, fail_reason = await check_output_integrity(ext)
                 if not is_safe_out:
                     logger.warning("Output guardrail blocked agent response (reason='%s')", fail_reason)
                     ext = (

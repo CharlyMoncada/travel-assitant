@@ -26,9 +26,9 @@ Asistente inteligente de viaje basado en IA Generativa que integra una arquitect
 - **⚙️ Validación Pydantic Dinámica & Caché TTL**:
   - Conversión automática al vuelo de los esquemas de parámetros JSON (`inputSchema`) de múltiples servidores MCP remotos en modelos tipados **Pydantic V2** (`create_model`).
   - Almacenamiento temporal en caché (TTL de 5 minutos) de las herramientas MCP descubiertas para optimizar la latencia conversacional.
-- **🛡️ Capa de Seguridad Global (Guardrails)** — 21 patrones de entrada + 5 checks de salida:
-  - *Input Guardrails*: Detección de idioma (`check_language` para inglés y español) y bloqueo determinista por 21 expresiones regulares compiladas: anulación de instrucciones, cambio de rol, DAN/jailbreak, extracción de prompt, escalada de privilegios, exfiltración, bypass hipotético, many-shot jailbreak, token smuggling, simulation jailbreak, ofuscación base64 e inyección Markdown.
-  - *Output Guardrails*: `check_output_integrity` intercepta: trazas Python, tokens de plantilla LLM, instrucciones de sistema filtradas, fugas de secrets/API keys y markup interno de tool calls.
+- **🛡️ Capa de Seguridad Global (Guardrails)** — arquitectura híbrida regex + LLM en entrada y salida:
+  - *Input Guardrails* (`check_input_guardrail`, async): diseño en **dos etapas**: pre-filtro regex ultrarrápido (< 1 ms) para patrones sin ambigüedad (tokens de plantilla, DAN/jailbreak, escalada de privilegios, ofuscación base64), seguido de un **clasificador LLM semántico** (`gpt-4o-mini`, salida Pydantic estructurada) que detecta detección de idioma no soportado e inyecciones parafraseadas, bypass hipotético, roleplay jailbreak, many-shot conditioning. Política fail-open si la API no está disponible.
+  - *Output Guardrails* (`check_output_integrity`, async): mismo diseño híbrido — pre-filtro regex para fugas técnicas (trazas Python, keys literales, marcadores de prompt del sistema, markup de tool calls) + **inspector LLM semántico** para fugas indirectas (claves parciales, divulgación implícita de configuración interna, código de implementación). Política fail-open si la API no está disponible.
 - **💾 Persistencia e Integridad conversacional**: Persistencia estructurada de mensajes en SQLite (`data/travel_assistant.db`) con alineación de turnos (User-Assistant Symmetry) tolerante a fallos.
 - **🧠 Memoria de usuario a largo plazo**: `ChatMemoryService` detecta preferencias declarativas del usuario (aeropuerto favorito, presupuesto, estilo de viaje) y las persiste por `thread_id` para recuperarlas en conversaciones futuras.
 - **⚡ Sub-Agentes sin Estado (Stateless)**: Ejecución aislada y sin estado de sub-agentes (sin checkpointer interno), evitando contaminación de estado cruzado (cross-contamination) entre agentes y reduciendo drásticamente el consumo de tokens.
@@ -280,12 +280,12 @@ python -m app.main
 
 ## Pruebas Automatizadas (Unit/Integration Tests)
 
-El sistema cuenta con una suite de pruebas consolidada en `scratch/test_suite.py` (17+ clases, 120+ tests) que valida:
+El sistema cuenta con una suite de pruebas consolidada en `scratch/test_suite.py` (35+ clases, 240+ tests) que valida:
 
 | Área | Clases de test |
 |------|---------------|
-| Guardrails de idioma e inyección | `TestLanguageGuardrail`, `TestInjectionGuardrail`, `TestInjectionGuardrailExtended` |
-| Guardrail de salida | `TestOutputIntegrityGuardrail`, `TestOutputIntegrityGuardrailExtended` |
+| Guardrails de entrada (regex + LLM) | `TestLanguageGuardrail`, `TestHybridGuardrailPreFilter`, `TestHybridGuardrailLLM`, `TestInjectionGuardrailExtended` |
+| Guardrails de salida (regex + LLM) | `TestOutputIntegrityGuardrail`, `TestOutputIntegrityGuardrailExtended`, `TestHybridOutputGuardrailLLM` |
 | Prompts de agentes | `TestAgentFocusDirectives` |
 | Telegram chunking | `TestTelegramResponseChunking` |
 | Persistencia de gastos y recordatorios | `TestExpensePersistence`, `TestReminderPersistence` |
