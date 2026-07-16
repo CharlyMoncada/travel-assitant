@@ -12,7 +12,7 @@ Asistente inteligente de viaje basado en IA Generativa que integra una arquitect
   - **Finance Agent** (`app/agents/finance/`): Focalizado en la gestión financiera con acceso exclusivo a herramientas del servidor de gastos.
   - **Reminder Agent** (`app/agents/reminder/`): Dedicado a la gestión del itinerario y recordatorios.
   - **General Agent** (`app/agents/general/`): Encargado de normativas de viajes (RAG) y logística local.
-  - **Recommender Agent** (`app/agents/recommender/`): Recomendador inteligente de equipaje de viaje basado en ReAct prompting. Dado un destino y número de días, consulta el clima actual en tiempo real y clasifica una lista estándar de objetos en tres categorías: obligatorios, recomendados y descartados. Funciona como agente local puro (sin MCP), con sus propias herramientas async (`get_weather`, `get_packing_items`).
+  - **Recommender Agent** (`app/agents/recommender/`): Recomendador inteligente de equipaje de viaje basado en ReAct prompting. Dado un destino, consulta el clima actual en tiempo real e infiere el tipo de destino (playa, montaña, urbano…) sin preguntar al usuario. Clasifica 62 objetos de viaje en tres categorías (✅ Obligatorios / 🟡 Recomendados / ❌ Descartados) y ofrece un consejo personalizado. Funciona como agente local puro (sin MCP), con sus propias herramientas async (`get_weather`, `get_packing_items`).
 - **⚡ Enrutamiento Cognitivo Unificado**:
   - **Habilidad de Enrutamiento del Supervisor (Supervisor Skill)**: Inferencia inteligente conversacional que opera a nivel de directrices semánticas del Prompt de Sistema del Supervisor LLM, agrupado en tres capas cognitivas:
     - *Capa 1: Bilingual Keywords*: Identificación instantánea de intenciones en español e inglés utilizando un catálogo de palabras clave bilingües.
@@ -26,10 +26,11 @@ Asistente inteligente de viaje basado en IA Generativa que integra una arquitect
 - **⚙️ Validación Pydantic Dinámica & Caché TTL**:
   - Conversión automática al vuelo de los esquemas de parámetros JSON (`inputSchema`) de múltiples servidores MCP remotos en modelos tipados **Pydantic V2** (`create_model`).
   - Almacenamiento temporal en caché (TTL de 5 minutos) de las herramientas MCP descubiertas para optimizar la latencia conversacional.
-- **🛡️ Capa de Seguridad Global (Guardrails)**:
-  - *Input Guardrails*: Detección de idioma (`check_language` para inglés y español) y bloqueo determinista por expresiones regulares contra ataques de inyección de prompts (`check_prompt_injection`).
-  - *Output Guardrails*: Validación de integridad de salida (`check_output_integrity`) para interceptar fugas de trazas de error de Python (excepciones), delimitadores de plantillas LLM o directivas del sistema antes de presentárselas al usuario.
-- **💾 Persistencia e Integridad conversacional**: Persistencia estructurada de mensajes en una base de datos relacional SQLite que garantiza la integridad y alineación de turnos (User-Assistant Symmetry) en el historial de forma tolerante a fallos.
+- **🛡️ Capa de Seguridad Global (Guardrails)** — 21 patrones de entrada + 5 checks de salida:
+  - *Input Guardrails*: Detección de idioma (`check_language` para inglés y español) y bloqueo determinista por 21 expresiones regulares compiladas: anulación de instrucciones, cambio de rol, DAN/jailbreak, extracción de prompt, escalada de privilegios, exfiltración, bypass hipotético, many-shot jailbreak, token smuggling, simulation jailbreak, ofuscación base64 e inyección Markdown.
+  - *Output Guardrails*: `check_output_integrity` intercepta: trazas Python, tokens de plantilla LLM, instrucciones de sistema filtradas, fugas de secrets/API keys y markup interno de tool calls.
+- **💾 Persistencia e Integridad conversacional**: Persistencia estructurada de mensajes en SQLite (`data/travel_assistant.db`) con alineación de turnos (User-Assistant Symmetry) tolerante a fallos.
+- **🧠 Memoria de usuario a largo plazo**: `ChatMemoryService` detecta preferencias declarativas del usuario (aeropuerto favorito, presupuesto, estilo de viaje) y las persiste por `thread_id` para recuperarlas en conversaciones futuras.
 - **⚡ Sub-Agentes sin Estado (Stateless)**: Ejecución aislada y sin estado de sub-agentes (sin checkpointer interno), evitando contaminación de estado cruzado (cross-contamination) entre agentes y reduciendo drásticamente el consumo de tokens.
 - **🔍 Sistema RAG avanzado**: Búsqueda semántica en documentos normativos (.txt y .pdf) usando ChromaDB y embeddings locales con inicialización lazy y fallback europeo integrado.
 - **💬 Interfaces múltiples**: Punto de acceso único para frontend web y Bot de Telegram (opcional).
@@ -114,7 +115,7 @@ flowchart TB
    - `app/agents/general/`: Agente Especialista en Normas/Logística (`agent.py`, `prompts.py`, `tools.py`, `general_skill.md`).
    - `app/agents/recommender/`: Agente Recomendador de Equipaje (`agent.py`, `tools.py`, `prompts.py`, `recommender_skill.md`). Agente local puro sin MCP. Sus herramientas async en inglés (`get_weather` y `get_packing_items`) consultan `wttr.in` y el listado CSV.
    - `app/agents/general/tools.py`: Definiciones locales de herramientas del agente (`rules`, `travel_search`).
-   - `app/data/objetos.csv`: Lista estándar de 30 objetos de viaje usada por el Recommender Agent.
+   - `app/data/objetos.csv`: Lista de 62 objetos de viaje clasificables (playa, montaña, frío, lluvia, generales) usada por el Recommender Agent.
 3. **Capa de Infraestructura y Servidores MCP**:
    - `app/mcp/finance/server.py` (Puerto `8002`): Servidor MCP independiente sobre SSE exclusivo para la manipulación CRUD de transacciones financieras.
    - `app/mcp/reminder/server.py` (Puerto `8003`): Servidor MCP independiente sobre SSE exclusivo para la gestión CRUD de recordatorios e itinerario.
@@ -171,13 +172,46 @@ BRAVE_SEARCH_COUNT=5
 
 ---
 
-## 4. Docker y arranque conjunto
-Se incluye `Dockerfile` y `docker-compose.yml` para lanzar los tres servicios en paralelo.
+## 4. Directorio de datos
+
+Todos los ficheros de datos persistentes (base de datos SQLite, índice vectorial ChromaDB) se almacenan bajo el directorio `data/` en la raíz del proyecto. Este directorio es ignorado por git (salvo `.gitkeep`) y se monta como volumen en Docker.
+
+```
+data/
+├── .gitkeep                 ← rastreado en git para garantizar que el directorio existe
+└── travel_assistant.db      ← generado en runtime, ignorado por git
+```
+
+> Si has estado usando versiones anteriores del proyecto con la base de datos en la raíz, muévela antes de arrancar:
+> ```bash
+> mv travel_assistant.db data/travel_assistant.db
+> ```
+
+---
+
+## 5. Docker y arranque conjunto
+
+Se incluye `Dockerfile` y `docker-compose.yml` para lanzar los tres servicios en paralelo. Los datos persistentes se gestionan mediante:
+
+- **Bind mount** `./data → /code/data`: comparte la base de datos SQLite entre el host y los contenedores.
+- **Named volume** `chromadb_data`: persiste el índice vectorial RAG entre reinicios sin necesidad de re-indexar los documentos PDF.
 
 ### Usar Docker Compose
 ```bash
+# Primer arranque (construye la imagen)
 docker compose up --build
+
+# Arranques posteriores (sin reconstruir)
+docker compose up
+
+# Parar sin borrar datos
+docker compose stop
+
+# Ver logs en tiempo real
+docker compose logs -f web
 ```
+
+> El directorio `data/` debe existir en el host antes del primer `docker compose up`. Al clonar el repositorio ya está creado gracias a `data/.gitkeep`.
 
 ---
 
@@ -246,12 +280,21 @@ python -m app.main
 
 ## Pruebas Automatizadas (Unit/Integration Tests)
 
-El sistema cuenta con una suite de pruebas consolidada y estructurada en `scratch/test_suite.py` que valida de forma automatizada las siguientes áreas clave:
-- **Detección de Idiomas y Guardrails**: Filtros de detección de idioma, bypasses de longitud, y overrides basados en la heurística de palabras clave del español.
-- **Telegram Chunking**: Fragmentación automática de respuestas de más de 4000 caracteres.
-- **Directivas de Enfoque**: Validaciones estructurales y de contenido en los prompts del sistema de los subagentes.
-- **Enrutamiento del Supervisor (LLM)**: Decisiones de enrutamiento semántico, enrutamiento múltiple, y exclusión de temas fuera de ámbito o geográficos (Japón).
-- **Poda de Memoria**: Simulación de límites de retención basados en turnos de base de datos.
+El sistema cuenta con una suite de pruebas consolidada en `scratch/test_suite.py` (17+ clases, 120+ tests) que valida:
+
+| Área | Clases de test |
+|------|---------------|
+| Guardrails de idioma e inyección | `TestLanguageGuardrail`, `TestInjectionGuardrail`, `TestInjectionGuardrailExtended` |
+| Guardrail de salida | `TestOutputIntegrityGuardrail`, `TestOutputIntegrityGuardrailExtended` |
+| Prompts de agentes | `TestAgentFocusDirectives` |
+| Telegram chunking | `TestTelegramResponseChunking` |
+| Persistencia de gastos y recordatorios | `TestExpensePersistence`, `TestReminderPersistence` |
+| Enrutamiento del supervisor | `TestSupervisorRouting` |
+| Concurrencia del orquestador | `TestOrchestratorConcurrency` |
+| Memoria a corto/largo plazo | `TestMemoryDetection`, `TestMemoryContextBuilder`, `TestDetectMemoryToSave`, `TestMemoryPersistence`, `TestConversationPersistence`, `TestChatMemoryServicePersistentHistory`, `TestBuildMemoryContext` |
+| Brave Search | `TestBraveSearch`, `TestTravelSearchTool` |
+| RAG | `TestRAGTextProcessing`, `TestRAGQueryLogic`, `TestRAGPDFExtraction`, `TestRAGStatus` |
+| Recommender | `TestRecommenderWeatherTool`, `TestRecommenderPackingTool`, `TestRecommenderPrompt`, `TestRecommenderPackingItems` |
 
 ### Ejecución de Pruebas
 

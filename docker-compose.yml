@@ -19,7 +19,8 @@ services:
       - reminder
     restart: unless-stopped
     volumes:
-      - ./data/travel_assistant.db:/code/travel_assistant.db
+      - ./data:/code/data
+      - chromadb_data:/code/app/chromadb_store
 
   finance:
     image: travel_assistant:latest
@@ -34,7 +35,7 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
     restart: unless-stopped
     volumes:
-      - ./data/travel_assistant.db:/code/travel_assistant.db
+      - ./data:/code/data
 
   reminder:
     image: travel_assistant:latest
@@ -49,4 +50,7 @@ services:
       - PYTHONDONTWRITEBYTECODE=1
     restart: unless-stopped
     volumes:
-      - ./data/travel_assistant.db:/code/travel_assistant.db
+      - ./data:/code/data
+
+volumes:
+  chromadb_data:
