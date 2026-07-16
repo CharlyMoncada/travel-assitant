@@ -12,8 +12,7 @@ from app.services.persistence.memory_persistence import format_user_memories
 
 from ..supervisor import run_supervisor
 from .guardrails_input import (
-    check_language,
-    check_prompt_injection,
+    check_input_guardrail,
     REJECTION_MESSAGE_LANGUAGE,
     REJECTION_MESSAGE_INJECTION,
 )
@@ -85,33 +84,32 @@ class TravelAgentOrchestrator:
                 exc_info=True,
             )
 
-        # Global Guardrail 1: Language check
-        lang_allowed, detected_lang = check_language(message)
-        if not lang_allowed:
-            logger.info("Global language guardrail blocked (lang='%s')", detected_lang)
+        # Global Guardrail: hybrid language + injection check (regex pre-filter + LLM)
+        lang_ok, is_safe, block_reason = await check_input_guardrail(message)
+
+        if not lang_ok:
+            logger.info("Input guardrail blocked: wrong language (reason='%s')", block_reason)
             try:
                 save_message(thread_id, "assistant", REJECTION_MESSAGE_LANGUAGE)
             except Exception as e:
                 logger.warning("Could not persist language rejection message: %s", e)
             return {
-                "llm_used": False,
-                "llm_tool": "global_language_guardrail",
+                "llm_used": True,
+                "llm_tool": "input_guardrail_language",
                 "agent_used": "global_guardrail",
                 "tool_response": None,
                 "message": REJECTION_MESSAGE_LANGUAGE,
             }
 
-        # Global Guardrail 2: Prompt injection check
-        is_safe, matched_pattern = check_prompt_injection(message)
         if not is_safe:
-            logger.warning("Global injection guardrail blocked (pattern='%s')", matched_pattern)
+            logger.warning("Input guardrail blocked: injection detected (reason='%s')", block_reason)
             try:
                 save_message(thread_id, "assistant", REJECTION_MESSAGE_INJECTION)
             except Exception as e:
                 logger.warning("Could not persist injection rejection message: %s", e)
             return {
-                "llm_used": False,
-                "llm_tool": "global_injection_guardrail",
+                "llm_used": True,
+                "llm_tool": "input_guardrail_injection",
                 "agent_used": "global_guardrail",
                 "tool_response": None,
                 "message": REJECTION_MESSAGE_INJECTION,
@@ -171,7 +169,7 @@ class TravelAgentOrchestrator:
                 final_message = MCPSchemaTranslator.extract_message(supervisor_text)
 
                 # Output integrity check
-                is_output_safe, output_failure_reason = check_output_integrity(final_message)
+                is_output_safe, output_failure_reason = await check_output_integrity(final_message)
                 if not is_output_safe:
                     logger.warning("Output guardrail blocked supervisor response (reason='%s')", output_failure_reason)
                     final_message = (
@@ -228,7 +226,7 @@ class TravelAgentOrchestrator:
                 ext = MCPSchemaTranslator.extract_message(out)
 
                 # Output integrity check for individual agent response
-                is_safe_out, fail_reason = check_output_integrity(ext)
+                is_safe_out, fail_reason = await check_output_integrity(ext)
                 if not is_safe_out:
                     logger.warning("Output guardrail blocked agent response (reason='%s')", fail_reason)
                     ext = (
