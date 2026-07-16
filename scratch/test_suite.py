@@ -691,5 +691,398 @@ class TestOrchestratorConcurrency(unittest.IsolatedAsyncioTestCase):
             orch_module.run_supervisor = original_supervisor
 
 
+class TestDetectMemoryToSave(unittest.TestCase):
+    """Unit tests for ChatMemoryService.detect_memory_to_save — pure logic, no DB."""
+
+    def setUp(self):
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+        self.detect = ChatMemoryService.detect_memory_to_save
+
+    # --------------------------------------------------------------------- #
+    # Travel preferences detected correctly                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_detects_favorite_airport_spanish(self):
+        result = self.detect("Mi aeropuerto favorito es el Adolfo Suárez")
+        self.assertIsNotNone(result)
+        key, value, category = result
+        self.assertEqual(key, "favorite_airport")
+        self.assertIn("Adolfo", value)
+        self.assertEqual(category, "travel_preference")
+
+    def test_detects_favorite_airport_english(self):
+        result = self.detect("My favorite airport is JFK")
+        self.assertIsNotNone(result)
+        key, value, category = result
+        self.assertEqual(key, "favorite_airport")
+        self.assertEqual(value, "JFK")
+
+    def test_detects_budget_spanish(self):
+        result = self.detect("Mi presupuesto es 500 euros")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "budget_preference")
+        self.assertIn("500", value)
+
+    def test_detects_budget_english(self):
+        result = self.detect("My budget is 1000 dollars")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "budget_preference")
+        self.assertIn("1000", value)
+
+    def test_detects_travel_style_spanish(self):
+        result = self.detect("Prefiero viajar en temporada baja")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "travel_style")
+        self.assertIn("temporada baja", value)
+
+    def test_detects_travel_style_english_prefer_to(self):
+        result = self.detect("I prefer to travel by train")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "travel_style")
+        self.assertIn("by train", value)
+
+    def test_detects_travel_style_english_prefer_traveling(self):
+        result = self.detect("I prefer traveling in business class")
+        self.assertIsNotNone(result)
+        key, value, _ = result
+        self.assertEqual(key, "travel_style")
+        self.assertIn("in business class", value)
+
+    # --------------------------------------------------------------------- #
+    # Questions must NOT be stored                                            #
+    # --------------------------------------------------------------------- #
+
+    def test_question_with_interrogation_not_saved(self):
+        self.assertIsNone(self.detect("¿Cuál es mi presupuesto?"))
+
+    def test_question_with_what_not_saved(self):
+        self.assertIsNone(self.detect("What is my favorite airport?"))
+
+    def test_generic_message_returns_none(self):
+        self.assertIsNone(self.detect("Quiero ir a París en julio"))
+
+
+class TestMemoryPersistence(unittest.TestCase):
+    """Integration tests for save_user_memory / get_user_memories / format_user_memories
+    using a temporary in-memory SQLite database."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS user_memories (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            memory_key TEXT NOT NULL,
+            memory_value TEXT NOT NULL,
+            category TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            UNIQUE(thread_id, memory_key)
+        );
+    """
+
+    def setUp(self):
+        import sqlite3, tempfile, os
+        import app.services.persistence.memory_persistence as mem_mod
+
+        # Temp file for an isolated SQLite DB
+        self._fd, self._tmp_path = tempfile.mkstemp(suffix=".db")
+        os.close(self._fd)
+
+        # Initialise schema
+        with sqlite3.connect(self._tmp_path) as conn:
+            conn.executescript(self._SCHEMA)
+
+        # Patch DB_PATH so the module uses our temp DB
+        from pathlib import Path
+        self._patcher = unittest.mock.patch.object(mem_mod, "DB_PATH", Path(self._tmp_path))
+        self._patcher.start()
+
+        from app.services.persistence.memory_persistence import (
+            save_user_memory, get_user_memories, format_user_memories,
+        )
+        self.save = save_user_memory
+        self.get = get_user_memories
+        self.fmt = format_user_memories
+
+    def tearDown(self):
+        self._patcher.stop()
+        import os
+        os.unlink(self._tmp_path)
+
+    # --------------------------------------------------------------------- #
+    # Basic save + retrieve                                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_save_and_retrieve_single_memory(self):
+        self.save("thread-1", "favorite_airport", "MAD", "travel_preference")
+        memories = self.get("thread-1")
+        self.assertEqual(len(memories), 1)
+        self.assertEqual(memories[0]["memory_key"], "favorite_airport")
+        self.assertEqual(memories[0]["memory_value"], "MAD")
+        self.assertEqual(memories[0]["category"], "travel_preference")
+
+    def test_save_multiple_keys_same_thread(self):
+        self.save("thread-2", "favorite_airport", "BCN", "travel_preference")
+        self.save("thread-2", "budget_preference", "800 EUR", "travel_preference")
+        memories = self.get("thread-2")
+        keys = {m["memory_key"] for m in memories}
+        self.assertIn("favorite_airport", keys)
+        self.assertIn("budget_preference", keys)
+
+    # --------------------------------------------------------------------- #
+    # UPSERT: updating an existing key                                        #
+    # --------------------------------------------------------------------- #
+
+    def test_upsert_updates_existing_value(self):
+        self.save("thread-3", "favorite_airport", "MAD", "travel_preference")
+        self.save("thread-3", "favorite_airport", "JFK", "travel_preference")  # update
+        memories = self.get("thread-3")
+        # Only one row for the same key
+        airport_memories = [m for m in memories if m["memory_key"] == "favorite_airport"]
+        self.assertEqual(len(airport_memories), 1)
+        self.assertEqual(airport_memories[0]["memory_value"], "JFK")
+
+    # --------------------------------------------------------------------- #
+    # Thread isolation                                                        #
+    # --------------------------------------------------------------------- #
+
+    def test_thread_isolation(self):
+        self.save("thread-A", "favorite_airport", "MAD", "travel_preference")
+        self.save("thread-B", "favorite_airport", "LHR", "travel_preference")
+
+        a_memories = self.get("thread-A")
+        b_memories = self.get("thread-B")
+
+        self.assertEqual(a_memories[0]["memory_value"], "MAD")
+        self.assertEqual(b_memories[0]["memory_value"], "LHR")
+
+    def test_empty_thread_returns_empty_list(self):
+        self.assertEqual(self.get("thread-nonexistent"), [])
+
+    # --------------------------------------------------------------------- #
+    # format_user_memories                                                    #
+    # --------------------------------------------------------------------- #
+
+    def test_format_returns_non_empty_string(self):
+        self.save("thread-fmt", "favorite_airport", "MAD", "travel_preference")
+        result = self.fmt("thread-fmt")
+        self.assertIsInstance(result, str)
+        self.assertIn("favorite_airport", result)
+        self.assertIn("MAD", result)
+
+    def test_format_empty_thread_returns_empty_string(self):
+        self.assertEqual(self.fmt("thread-noone"), "")
+
+
+class TestConversationPersistence(unittest.TestCase):
+    """Integration tests for save_message / get_recent_messages using a temporary SQLite DB."""
+
+    _SCHEMA = """
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            thread_id TEXT NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TEXT
+        );
+    """
+
+    def setUp(self):
+        import sqlite3, tempfile, os
+        import app.services.persistence.conversation_persistence as conv_mod
+
+        self._fd, self._tmp_path = tempfile.mkstemp(suffix=".db")
+        os.close(self._fd)
+
+        with sqlite3.connect(self._tmp_path) as conn:
+            conn.executescript(self._SCHEMA)
+
+        from pathlib import Path
+        self._patcher = unittest.mock.patch.object(conv_mod, "DB_PATH", Path(self._tmp_path))
+        self._patcher.start()
+
+        from app.services.persistence.conversation_persistence import save_message, get_recent_messages
+        self.save = save_message
+        self.get = get_recent_messages
+
+    def tearDown(self):
+        self._patcher.stop()
+        import os
+        os.unlink(self._tmp_path)
+
+    # --------------------------------------------------------------------- #
+    # Basic save + retrieve                                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_save_and_retrieve_message(self):
+        self.save("t1", "user", "Hola, ¿qué tiempo hace en Madrid?")
+        msgs = self.get("t1")
+        self.assertEqual(len(msgs), 1)
+        self.assertEqual(msgs[0]["role"], "user")
+        self.assertIn("Madrid", msgs[0]["content"])
+
+    def test_roles_preserved(self):
+        self.save("t2", "user", "Pregunta")
+        self.save("t2", "assistant", "Respuesta del asistente")
+        msgs = self.get("t2")
+        roles = [m["role"] for m in msgs]
+        self.assertIn("user", roles)
+        self.assertIn("assistant", roles)
+
+    # --------------------------------------------------------------------- #
+    # Ordering: get_recent_messages returns chronological order               #
+    # --------------------------------------------------------------------- #
+
+    def test_messages_returned_in_chronological_order(self):
+        for i in range(5):
+            self.save("t3", "user", f"Mensaje {i}")
+        msgs = self.get("t3")
+        contents = [m["content"] for m in msgs]
+        # First inserted should be first returned (reversed from DESC fetch)
+        self.assertEqual(contents[0], "Mensaje 0")
+        self.assertEqual(contents[-1], "Mensaje 4")
+
+    # --------------------------------------------------------------------- #
+    # Limit                                                                   #
+    # --------------------------------------------------------------------- #
+
+    def test_limit_respected(self):
+        for i in range(10):
+            self.save("t4", "user", f"msg{i}")
+        msgs = self.get("t4", limit=3)
+        self.assertEqual(len(msgs), 3)
+        # Should return the 3 most recent, in chronological order
+        contents = [m["content"] for m in msgs]
+        self.assertIn("msg9", contents)
+
+    # --------------------------------------------------------------------- #
+    # Thread isolation                                                        #
+    # --------------------------------------------------------------------- #
+
+    def test_thread_isolation(self):
+        self.save("thread-X", "user", "Mensaje de X")
+        self.save("thread-Y", "user", "Mensaje de Y")
+
+        x_msgs = self.get("thread-X")
+        y_msgs = self.get("thread-Y")
+
+        self.assertEqual(len(x_msgs), 1)
+        self.assertEqual(len(y_msgs), 1)
+        self.assertIn("X", x_msgs[0]["content"])
+        self.assertIn("Y", y_msgs[0]["content"])
+
+    def test_empty_thread_returns_empty_list(self):
+        self.assertEqual(self.get("thread-void"), [])
+
+
+class TestChatMemoryServicePersistentHistory(unittest.TestCase):
+    """Tests for ChatMemoryService.get_persistent_history and format_persistent_memory
+    using a patched conversation persistence layer."""
+
+    def _make_rows(self, pairs):
+        """Build row dicts like conversation_persistence returns."""
+        from datetime import datetime
+        return [
+            {"role": role, "content": content, "created_at": datetime.utcnow().isoformat()}
+            for role, content in pairs
+        ]
+
+    def test_get_persistent_history_returns_langchain_messages(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+        from langchain_core.messages import HumanMessage, AIMessage
+
+        rows = self._make_rows([("user", "Hola"), ("assistant", "¡Hola! ¿En qué te ayudo?"), ("user", "Quiero ir a Roma")])
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=rows):
+            history = ChatMemoryService.get_persistent_history("thread-hist")
+
+        self.assertEqual(len(history), 3)
+        self.assertIsInstance(history[0], HumanMessage)
+        self.assertIsInstance(history[1], AIMessage)
+        self.assertIsInstance(history[2], HumanMessage)
+        self.assertEqual(history[0].content, "Hola")
+
+    def test_get_persistent_history_skips_empty_content(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        rows = self._make_rows([("user", "Hola"), ("assistant", ""), ("user", "Roma")])
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=rows):
+            history = ChatMemoryService.get_persistent_history("thread-empty")
+
+        # Empty assistant message should be skipped
+        self.assertEqual(len(history), 2)
+
+    def test_get_persistent_history_returns_empty_on_db_error(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", side_effect=Exception("DB down")):
+            history = ChatMemoryService.get_persistent_history("thread-err")
+
+        self.assertEqual(history, [])
+
+    def test_format_persistent_memory_returns_string(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        rows = self._make_rows([("user", "Quiero ir a Lisboa"), ("assistant", "Claro, te ayudo")])
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=rows):
+            result = ChatMemoryService.format_persistent_memory("thread-fmt")
+
+        self.assertIn("user:", result)
+        self.assertIn("Lisboa", result)
+        self.assertIn("assistant:", result)
+
+    def test_format_persistent_memory_returns_empty_string_on_error(self):
+        from unittest.mock import patch
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+
+        with patch("app.agents.orchestrator.history_manager.get_recent_messages", side_effect=Exception("DB down")):
+            result = ChatMemoryService.format_persistent_memory("thread-err")
+
+        self.assertEqual(result, "")
+
+
+class TestBuildMemoryContext(unittest.TestCase):
+    """Tests for ChatMemoryService.build_memory_context_for_agent — pure logic."""
+
+    def setUp(self):
+        from app.agents.orchestrator.history_manager import ChatMemoryService
+        self.build = ChatMemoryService.build_memory_context_for_agent
+
+    def test_no_memory_returns_raw_message(self):
+        result = self.build("t", "", "", "¿Qué tiempo hace en Berlín?")
+        self.assertEqual(result, "¿Qué tiempo hace en Berlín?")
+
+    def test_long_term_memory_prepended(self):
+        result = self.build("t", "", "- favorite_airport: MAD", "¿Vuelos disponibles?")
+        self.assertIn("Long-term user memory", result)
+        self.assertIn("MAD", result)
+        self.assertIn("¿Vuelos disponibles?", result)
+
+    def test_short_term_memory_prepended(self):
+        result = self.build("t", "user: Hola\nassistant: Hi", "", "Siguiente pregunta")
+        self.assertIn("Previous conversation memory", result)
+        self.assertIn("user: Hola", result)
+        self.assertIn("Siguiente pregunta", result)
+
+    def test_both_memories_in_output(self):
+        result = self.build("t", "user: Hola", "- budget: 500 EUR", "Mi mensaje")
+        self.assertIn("Long-term user memory", result)
+        self.assertIn("Previous conversation memory", result)
+        self.assertIn("Mi mensaje", result)
+
+    def test_current_message_always_last(self):
+        result = self.build("t", "user: Hola", "- budget: 500", "Mi mensaje final")
+        self.assertTrue(result.endswith("Mi mensaje final"))
+
+
 if __name__ == "__main__":
     unittest.main()
