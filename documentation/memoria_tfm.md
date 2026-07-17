@@ -8,7 +8,7 @@
 
 **Integrantes del grupo:**
 - Amaya Rosa Gil Pippino
-- Carmen Maíllo
+- Carmen Malia
 - Carlos Moncada
 
 **Repositorio:** https://github.com/CharlyMoncada/travel-assitant
@@ -1465,5 +1465,5 @@ curl -X POST http://localhost:8000/message \
 
 *Fin de la memoria del Trabajo Fin de Máster*
 *Travel Assistant — Sistema Agéntico de Asistencia al Viajero*
-*Grupo: Amaya Rosa Gil Pippino, Carmen Maíllo, Carlos Moncada*
+*Grupo: Amaya Rosa Gil Pippino, Carmen Malia, Carlos Moncada*
 *Julio 2026*
