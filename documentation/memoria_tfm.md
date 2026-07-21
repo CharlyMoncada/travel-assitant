@@ -1122,7 +1122,7 @@ Las líneas de trabajo futuro identificadas se agrupan en dos categorías:
 
 - **Despliegue en cloud.** Migración de la infraestructura Docker local a un entorno cloud (GCP Cloud Run, AWS Fargate) con CI/CD automatizado, HTTPS y autenticación multiusuario. La arquitectura de tres servicios Docker es directamente compatible con orquestadores cloud.
 
-- **Notificaciones proactivas.** Implementación de un proceso background que revise los recordatorios próximos y envíe notificaciones proactivas por Telegram o email antes de la fecha y hora registradas.
+- **Sistema de notificaciones y alertas proactivas de recordatorios:** Implementación de un daemon/worker en segundo plano (usando Celery, Redis o APScheduler) que consulte periódicamente la base de datos de recordatorios del MCP Reminder Server. Este sistema enviará automáticamente mensajes *push* proactivos al usuario a través del bot de Telegram o alertas Web en tiempo real cuando se aproxime la fecha y hora programadas (por ejemplo, avisos de check-in de vuelos, tiempo estimado de salida al aeropuerto o alertas de eventos del viaje), transformando el asistente de un modelo puramente reactivo a uno proactivo.
 
 ---
 
