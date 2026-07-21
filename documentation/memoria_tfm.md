@@ -29,56 +29,56 @@ El resultado es un MVP funcional y completamente reproducible mediante Docker, c
 
 ## Índice de contenidos
 
-1. Introducción
-   - 1.1 Contexto y motivación
-   - 1.2 Problemática identificada
-   - 1.3 Objetivos del proyecto
-   - 1.4 Alcance del MVP
-   - 1.5 Estructura de la memoria
-2. Estado del arte y fundamentos teóricos
-   - 2.1 Modelos de Lenguaje de Gran Escala (LLMs)
-   - 2.2 Técnicas de adaptación de LLMs al dominio
-   - 2.3 Arquitecturas multi-agente
-   - 2.4 Model Context Protocol (MCP)
-   - 2.5 Seguridad en sistemas LLM: prompt injection y guardarrailes
-   - 2.6 Marco ético y consideraciones legales
-3. Requisitos y diseño de la solución
-   - 3.1 Requisitos funcionales
-   - 3.2 Requisitos no funcionales
-   - 3.3 Arquitectura de la solución
-   - 3.4 Selección tecnológica justificada
-   - 3.5 Diseño de datos y pipelines
-4. Implementación
-   - 4.1 Estructura del código y Clean Architecture
-   - 4.2 Orquestador central
-   - 4.3 Sistema de enrutamiento cognitivo (Supervisor)
-   - 4.4 Sub-agentes especialistas
-   - 4.5 Servidores MCP desacoplados
-   - 4.6 Sistema de guardarrailes de seguridad
-   - 4.7 Sistema de memoria
-   - 4.8 Integración con servicios externos
-   - 4.9 Infraestructura y despliegue
-5. Evaluación y experimentos
-   - 5.1 Metodología de evaluación
-   - 5.2 Métricas de calidad de respuestas
-   - 5.3 Métricas de rendimiento
-   - 5.4 Análisis de costes y ROI
-   - 5.5 Análisis de errores y limitaciones
-6. Pruebas y validación
-   - 6.1 Estrategia de testing
-   - 6.2 Cobertura por módulo
-   - 6.3 Enfoque de mocking para LLM
-   - 6.4 Observabilidad en producción
-7. Discusión
-   - 7.1 Desviaciones respecto a la propuesta inicial
-   - 7.2 Lecciones aprendidas
-   - 7.3 Riesgos, ética y mitigaciones
-   - 7.4 Comparativa con soluciones existentes
-8. Conclusiones y trabajo futuro
-   - 8.1 Conclusiones
-   - 8.2 Trabajo futuro
-9. Bibliografía
-10. Anexos
+- **[1. Introducción](#1-introduccion)**
+  - [1.1 Contexto y motivación](#11-contexto-y-motivacion)
+  - [1.2 Problemática identificada](#12-problematica-identificada)
+  - [1.3 Objetivos del proyecto](#13-objetivos-del-proyecto)
+  - [1.4 Alcance del MVP](#14-alcance-del-mvp)
+  - [1.5 Estructura de la memoria](#15-estructura-de-la-memoria)
+- **[2. Estado del arte y fundamentos teóricos](#2-estado-del-arte-y-fundamentos-teoricos)**
+  - [2.1 Modelos de Lenguaje de Gran Escala (LLMs)](#21-modelos-de-lenguaje-de-gran-escala-llms)
+  - [2.2 Técnicas de adaptación de LLMs al dominio](#22-tecnicas-de-adaptacion-de-llms-al-dominio)
+  - [2.3 Arquitecturas multi-agente](#23-arquitecturas-multi-agente)
+  - [2.4 Model Context Protocol (MCP)](#24-model-context-protocol-mcp)
+  - [2.5 Seguridad en sistemas LLM: prompt injection y guardarrailes](#25-seguridad-en-sistemas-llm-prompt-injection-y-guardarrailes)
+  - [2.6 Marco ético y consideraciones legales](#26-marco-etico-y-consideraciones-legales)
+- **[3. Requisitos y diseño de la solución](#3-requisitos-y-diseno-de-la-solucion)**
+  - [3.1 Requisitos funcionales](#31-requisitos-funcionales)
+  - [3.2 Requisitos no funcionales](#32-requisitos-no-funcionales)
+  - [3.3 Arquitectura de la solución](#33-arquitectura-de-la-solucion)
+  - [3.4 Selección tecnológica justificada](#34-seleccion-tecnologica-justificada)
+  - [3.5 Diseño de datos y pipelines](#35-diseno-de-datos-y-pipelines)
+- **[4. Implementación](#4-implementacion)**
+  - [4.1 Estructura del código y Clean Architecture](#41-estructura-del-codigo-y-clean-architecture)
+  - [4.2 Orquestador central](#42-orquestador-central)
+  - [4.3 Sistema de enrutamiento cognitivo (Supervisor)](#43-sistema-de-enrutamiento-cognitivo-supervisor)
+  - [4.4 Sub-agentes especialistas](#44-sub-agentes-especialistas)
+  - [4.5 Servidores MCP desacoplados](#45-servidores-mcp-desacoplados)
+  - [4.6 Sistema de guardarrailes de seguridad](#46-sistema-de-guardarrailes-de-seguridad)
+  - [4.7 Sistema de memoria](#47-sistema-de-memoria)
+  - [4.8 Integración con servicios externos](#48-integracion-con-servicios-externos)
+  - [4.9 Infraestructura y despliegue](#49-infraestructura-y-despliegue)
+- **[5. Evaluación y experimentos](#5-evaluacion-y-experimentos)**
+  - [5.1 Metodología de evaluación](#51-metodologia-de-evaluacion)
+  - [5.2 Métricas de calidad de respuestas](#52-metricas-de-calidad-de-respuestas)
+  - [5.3 Métricas de rendimiento](#53-metricas-de-rendimiento)
+  - [5.4 Análisis de costes y ROI](#54-analisis-de-costes-y-roi)
+  - [5.5 Análisis de errores y limitaciones](#55-analisis-de-errores-y-limitaciones)
+- **[6. Pruebas y validación](#6-pruebas-y-validacion)**
+  - [6.1 Estrategia de testing](#61-estrategia-de-testing)
+  - [6.2 Cobertura por módulo](#62-cobertura-por-modulo)
+  - [6.3 Enfoque de mocking para LLM](#63-enfoque-de-mocking-para-llm)
+  - [6.4 Observabilidad en producción](#64-observabilidad-en-produccion)
+- **[7. Discusión](#7-discusion)**
+  - [7.1 Desviaciones respecto a la propuesta inicial](#71-desviaciones-respecto-a-la-propuesta-inicial)
+  - [7.2 Lecciones aprendidas](#72-lecciones-aprendidas)
+  - [7.3 Riesgos, ética y mitigaciones](#73-riesgos-etica-y-mitigaciones)
+  - [7.4 Comparativa con soluciones existentes](#74-comparativa-con-soluciones-existentes)
+- **[8. Conclusiones y trabajo futuro](#8-conclusiones-y-trabajo-futuro)**
+  - [8.1 Conclusiones](#81-conclusiones)
+  - [8.2 Trabajo futuro](#82-trabajo-futuro)
+- **[9. Bibliografía](#9-bibliografia)**
+- **[10. Anexos](#10-anexos)**
 
 ---
 
@@ -161,14 +161,14 @@ Los Modelos de Lenguaje de Gran Escala (LLMs, *Large Language Models*) son siste
 
 El proceso de generación de un LLM es **autorregresivo**: dado un contexto de entrada (prompt), el modelo predice el token más probable en cada paso, concatena el token generado al contexto y repite el proceso hasta generar la respuesta completa. Esta naturaleza estocástica explica tanto la capacidad generativa del modelo como su tendencia a las **alucinaciones**: el modelo puede generar secuencias plausibles desde el punto de vista lingüístico pero factualmente incorrectas, especialmente en dominios que requieren información factual actualizada.
 
-Los modelos de la familia **GPT-4** de OpenAI, y en particular **GPT-4o-mini**, constituyen el estado del arte accesible para aplicaciones en producción. GPT-4o-mini ofrece un equilibrio óptimo para este proyecto: razonamiento suficiente para el enrutamiento cognitivo y el function calling estructurado, latencia reducida respecto a GPT-4o completo, y coste por token significativamente menor (aproximadamente 15 veces más barato que GPT-4o en el momento de desarrollo).
+Los modelos de la familia **GPT** de OpenAI, y en particular **gpt-5-nano**, constituyen el estado del arte accesible para aplicaciones en producción. **gpt-5-nano** ofrece un equilibrio óptimo para este proyecto: razonamiento suficiente para el enrutamiento cognitivo y el function calling estructurado, latencia reducida y coste por token significativamente menor en comparación con modelos de mayor tamaño.
 
 **Alternativas consideradas y descartadas:**
 - *Claude Haiku (Anthropic):* Comparable en coste y velocidad, pero con menor integración nativa con LangChain en el momento de desarrollo.
 - *Llama 3 (Meta, vía Ollama):* Viable para uso local sin coste de API, pero requiere hardware significativo y su rendimiento en function calling estructurado es inferior.
 - *Mistral 7B:* Opción económica y rápida, pero con capacidades de seguimiento de instrucciones complejas por debajo del umbral requerido para el enrutamiento multi-dominio.
 
-La elección de GPT-4o-mini permite además aprovechar la función de **salida estructurada** (*structured output*) nativa de OpenAI, que garantiza respuestas conformes a un esquema Pydantic definido por el desarrollador: esencial para el sistema de guardarrailes y el enrutamiento del Supervisor.
+La elección de **gpt-5-nano** permite además aprovechar la función de **salida estructurada** (*structured output*) nativa de OpenAI, que garantiza respuestas conformes a un esquema Pydantic definido por el desarrollador: esencial para el sistema de guardarrailes y el enrutamiento del Supervisor.
 
 ### 2.2 Técnicas de adaptación de LLMs al dominio
 
@@ -386,7 +386,7 @@ flowchart TB
 
 | Componente | Tecnología elegida | Alternativas consideradas | Justificación |
 |---|---|---|---|
-| LLM | GPT-4o-mini (OpenAI) | Claude Haiku, Llama 3, Mistral 7B | Mejor relación coste/rendimiento para function calling estructurado; salida Pydantic nativa |
+| LLM | gpt-5-nano (OpenAI) | Claude Haiku, Llama 3, Mistral 7B | Mejor relación coste/rendimiento para function calling estructurado; salida Pydantic nativa |
 | Framework de agentes | LangChain + LangGraph | AutoGen, CrewAI, Semantic Kernel | Madurez, documentación, integración nativa con OpenAI y MCP |
 | Base de datos vectorial | ChromaDB | Pinecone, Weaviate, FAISS | Ejecución local sin coste de API; persistencia nativa; API Python sencilla |
 | Persistencia relacional | SQLite + SQLAlchemy | PostgreSQL, MySQL | Suficiente para MVP personal; elimina dependencia de servidor de BD; reproducibilidad total |
@@ -685,53 +685,8 @@ El transporte SSE del protocolo MCP requiere un tratamiento especial en FastAPI:
 3. **Principio MCP:** La especificación MCP está diseñada para herramientas ejecutadas en procesos separados, potencialmente en lenguajes y tecnologías distintos.
 4. **Desarrollo independiente:** Cada servidor puede desplegarse, actualizarse y probarse de forma independiente.
 
-El orquestador descubre dinámicamente las herramientas de cada servidor leyendo la variable de entorno `MCP_SERVERS` (lista de URLs SSE separadas por comas), lo que significa que añadir un tercer servidor MCP solo requiere añadir su URL a esa variable, sin modificar ningún código del orquestador.
-
-### 4.6 Sistema de guardarrailes de seguridad
-
-Los guardarrailes constituyen la sección técnicamente más relevante del proyecto desde el punto de vista académico, tanto por su complejidad como por el proceso iterativo de diseño que se siguió.
-
-#### Evolución en tres versiones
-
-**Versión 1 (ramas `gr_fin`, `gr_remind`): Regex + langdetect**
-
-La primera implementación usaba `langdetect` para detección de idioma y expresiones regulares para detección de inyección. Limitaciones detectadas en las pruebas:
-
-- `langdetect` genera una tasa elevada de falsos positivos en mensajes cortos (menos de 5 palabras): "hola", "ok", "gracias" se clasificaban frecuentemente como idioma incorrecto.
-- Los mensajes en español que contenían alguna palabra en portugués o italiano (por similitud léxica) se clasificaban incorrectamente como bloqueables.
-- Las expresiones regulares solo bloqueaban patrones de ataque exactamente conocidos: una paráfrasis como "hipotéticamente si no tuvieras restricciones" no era detectada.
-
-**Versión 2 (rama `fix_guardrails`): Regex ampliadas**
-
-Se ampliaron los patrones regex para cubrir 21 categorías de ataque:
-- Bypass hipotético (`"hypothetically if you had no rules"`, `"hipotéticamente sin restricciones"`)
-- Many-shot jailbreak (secuencias User/Assistant falsas)
-- Token smuggling (`assistant:`, `system:` como prefijos de línea)
-- Simulation jailbreak (`"for a story I am writing"`, `"para una historia que escribo"`)
-- Ofuscación/base64 (`base64 decode`, `eval(`, `exec(`)
-- Inyección mediante bloques Markdown de sistema (` ```system `, ` ```prompt `)
-
-Aunque mejoró significativamente la cobertura, el enfoque seguía siendo reactivo: solo bloqueaba patrones explícitamente codificados. Un atacante con conocimiento del conjunto de patrones podría eludirlos con una paráfrasis suficientemente creativa.
-
-**Versión 3 (rama `llm_guardrails`): Híbrido LLM**
-
-La tercera versión, motivada por el feedback del tutor de contenidos, adopta un enfoque en dos etapas:
-
-```
-mensaje de entrada
-      │
-      ▼
-ETAPA 1: Pre-filtro regex (< 1 ms, sin coste de API)
-  Captura solo patrones sin riesgo de falso positivo:
-  - Tokens de plantilla: [INST], <<SYS>>, <|system|>
-  - DAN/jailbreak: "DAN mode", "jailbreak", "unrestricted mode"
-  - Escalada de privilegios: "developer mode", "god mode", "admin mode"
-  - Ofuscación: "base64 decode", "eval(", "exec("
-      │
-      ├── DETECTADO → Bloqueo inmediato (sin llamada al LLM)
-      │
-      ▼ NO DETECTADO
-ETAPA 2: Clasificador LLM (gpt-4o-mini, ~200-400 ms)
+El orquestador descubre dinámicamente las herramientas de cada servidor leyendo la variable de entorno `MCP_SERVERS` (lista de URLs SSE separadas por comas), lo que significa que añ       ▼ NO DETECTADO
+ETAPA 2: Clasificador LLM (gpt-5-nano, ~200-400 ms)
   Salida estructurada Pydantic:
   class GuardrailDecision(BaseModel):
       language: str        # "es", "en", "other"
@@ -783,7 +738,37 @@ En cada nueva invocación, las preferencias almacenadas se recuperan e inyectan 
 
 ### 4.8 Integración con servicios externos
 
-**OpenAI API.** Toda la integración con OpenAI se centraliza en `app/services/llm.py`. El modelo a usar se configura mediante la variable de entorno `OPENAI_MODEL`, lo que permite cambiar de `gpt-4o-mini` a cualquier otro modelo compatible con function calling sin modificar el código.
+**OpenAI API.** Toda la integración con OpenAI se centraliza en `app/services/llm.py`. El modelo a usar se configura mediante la variable de entorno `OPENAI_MODEL`, lo que permite cambiar de `gpt-5-nano` a cualquier otro modelo compatible con function calling sin modificar el código.nsaje | $0 | ~$0.0001 | ~$0.0001 (0 si pre-filtro bloquea) |
+| Cobertura técnica | Alta | Alta | Alta |
+| Cobertura semántica | Baja | Alta | Alta |
+| Mantenimiento | Alto | Bajo | Bajo |
+| Resistencia a caída API | No aplica | Ninguna | Fail-open controlado |
+
+El enfoque híbrido satisface simultáneamente los requisitos de robustez semántica (el LLM entiende variaciones y paráfrasis de ataques) y disponibilidad (si la API del clasificador LLM cae, el sistema continúa operativo gracias a la política fail-open, aceptando el riesgo mínimo asociado).
+
+### 4.7 Sistema de memoria
+
+El sistema implementa dos capas de memoria independientes:
+
+**Memoria a corto plazo (historial de conversación).** Cada mensaje del usuario y respuesta del asistente se persiste inmediatamente en la tabla `conversation_messages` de SQLite, identificados por `thread_id`. Antes de cada invocación al Supervisor, el orquestador recupera los últimos N mensajes y los inyecta como historial de conversación. Una función de poda limita el historial a los últimos 3 turnos completos para evitar el crecimiento ilimitado del contexto.
+
+**Memoria a largo plazo (preferencias de usuario).** `ChatMemoryService.detect_memory_to_save()` analiza cada mensaje del usuario buscando expresiones declarativas de preferencias personales de viaje:
+
+```python
+# Ejemplos de mensajes que activan la detección:
+"Mi aeropuerto favorito es Barajas"      → favorite_airport: "Barajas"
+"My budget for this trip is 500 euros"   → budget: "500 euros"
+"Prefiero viajes de mochila"             → travel_style: "mochila"
+"I usually travel light"                  → travel_style: "light"
+```
+
+La detección se implementa mediante expresiones regulares sobre patrones declarativos en español e inglés, sin necesidad de invocar el LLM: coste cero, latencia cero. Las preferencias detectadas se almacenan mediante UPSERT en `user_memories`, garantizando que cada clave de preferencia (`favorite_airport`, `budget`, `travel_style`) solo tiene una entrada vigente por sesión.
+
+En cada nueva invocación, las preferencias almacenadas se recuperan e inyectan como contexto adicional en el prompt del agente, permitiendo respuestas personalizadas: si el usuario declaró previamente que su aeropuerto habitual es Barajas, el agente puede usar esa información sin que el usuario tenga que repetirla.
+
+### 4.8 Integración con servicios externos
+
+**OpenAI API.** Toda la integración con OpenAI se centraliza en `app/services/llm.py`. El modelo a usar se configura mediante la variable de entorno `OPENAI_MODEL`, lo que permite cambiar de `gpt-5-nano` a cualquier otro modelo compatible con function calling sin modificar el código.
 
 **Brave Search.** El cliente HTTP asíncrono `app/services/brave_search.py` usa `httpx` para consultas a la API de Brave Search. Si `BRAVE_API_KEY` no está configurada en el entorno, la función devuelve un JSON con un campo `warning` explicando la limitación, en lugar de lanzar una excepción. Esta política de degradación controlada (*graceful degradation*) garantiza que el sistema sigue siendo útil incluso sin clave de Brave: las otras tres funcionalidades principales (finanzas, recordatorios, equipaje) continúan operativas.
 
@@ -819,6 +804,16 @@ python -m app.main                  # Terminal 3
 
 El script `start.sh` arranca los tres procesos en paralelo desde una única terminal, redirige los logs a `logs/` y permite detener todo con un único `Ctrl+C`.
 
+#### Evidencias de Interfaz de Usuario y UX
+
+A continuación se ilustra la interacción conversacional real con la solución a través de sus dos interfaces principales:
+
+![Figura 4.1: Interfaz Web Frontend del Travel Assistant mostrando la gestión conversacional de gastos y recordatorios.](images/ui_web_frontend.png)
+*Figura 4.1: Interfaz Web Frontend del Travel Assistant mostrando la gestión conversacional de gastos y recordatorios.*
+
+![Figura 4.2: Bot de Telegram procesando una consulta multi-intención compleja que activa simultáneamente el registro de gasto (MCP Finanzas), creación de recordatorios (MCP Recordatorios) y recomendación de equipaje basada en clima real. Se observa además el bloqueo por guardarrail de seguridad en el turno anterior.](images/ui_telegram_bot.png)
+*Figura 4.2: Bot de Telegram procesando una consulta multi-intención compleja (registro de gasto vía MCP, recordatorios de salida/vuelta y recomendación de equipaje con clima en tiempo real) y demostración de bloqueo por guardarrail de seguridad.*
+
 ---
 
 ## 5. Evaluación y experimentos
@@ -851,7 +846,7 @@ La reducción de falsos positivos del v1 al v3 es crítica para la usabilidad: u
 
 ### 5.3 Métricas de rendimiento
 
-Las latencias medidas a lo largo del desarrollo (con conexión de red estándar y modelo `gpt-4o-mini`) son:
+Las latencias medidas a lo largo del desarrollo (con conexión de red estándar y modelo `gpt-5-nano`) son:
 
 | Tipo de consulta | Latencia media | Latencia P95 |
 |---|---|---|
@@ -870,7 +865,7 @@ Las latencias medidas a lo largo del desarrollo (con conexión de red estándar 
 
 ### 5.4 Análisis de costes y ROI
 
-El modelo seleccionado, GPT-4o-mini, tiene los siguientes precios de referencia (julio 2026):
+El modelo seleccionado, gpt-5-nano, tiene los siguientes precios de referencia (julio 2026):
 - Input: $0.15 por millón de tokens
 - Output: $0.60 por millón de tokens
 
@@ -886,7 +881,7 @@ El modelo seleccionado, GPT-4o-mini, tiene los siguientes precios de referencia 
 
 **Comparativa de escenarios de uso:**
 
-| Escenario | Mensajes/mes | Coste/mes (GPT-4o-mini) | Coste/mes (GPT-4o completo) | Ahorro |
+| Escenario | Mensajes/mes | Coste/mes (gpt-5-nano) | Coste/mes (GPT-4o completo) | Ahorro |
 |---|---|---|---|---|
 | Usuario individual activo | 1.000 | ~$0.53 | ~$9.50 | 94% |
 | Equipo pequeño (5 usuarios) | 5.000 | ~$2.63 | ~$47.50 | 94% |
@@ -899,7 +894,7 @@ El modelo seleccionado, GPT-4o-mini, tiene los siguientes precios de referencia 
 - API meteorológica wttr.in: pública y gratuita ($0.00)
 - Infraestructura de hosting: Docker en servidor propio (coste de infraestructura según entorno)
 
-La elección de GPT-4o-mini en lugar de GPT-4o representa un ahorro del 94% en costes de inferencia con una degradación de rendimiento marginal para el caso de uso de este proyecto (enrutamiento y function calling en dominios bien definidos, no razonamiento complejo).
+La elección de gpt-5-nano en lugar de GPT-4o representa un ahorro del 94% en costes de inferencia con una degradación de rendimiento marginal para el caso de uso de este proyecto (enrutamiento y function calling en dominios bien definidos, no razonamiento complejo).
 
 ### 5.5 Análisis de errores y limitaciones
 
@@ -1016,6 +1011,12 @@ async def test_api_error_fails_open(self):
 
 Esta observabilidad permite diagnosticar rápidamente problemas de enrutamiento incorrecto, herramientas MCP que devuelven resultados inesperados, o prompts que generan respuestas fuera del scope esperado.
 
+![Figura 6.1: Vista general del panel de trazabilidad de LangSmith mostrando el listado de ejecuciones, latencias P95, consumo de tokens e interceptaciones del guardarrail.](images/langsmith_trace_list.png)
+*Figura 6.1: Vista general del panel de trazabilidad de LangSmith mostrando el listado de ejecuciones conversacionales, tiempos de respuesta P95, consumo de tokens e interceptaciones en tiempo real por el guardarrail (0.08s).*
+
+![Figura 6.2: Árbol de ejecución en cascada (Waterfall Execution Tree) en LangSmith detallando la consulta al Supervisor, la delegación paralela a sub-agentes y la invocación de herramientas MCP.](images/langsmith_trace_detail.png)
+*Figura 6.2: Árbol de ejecución en cascada (Waterfall Execution Tree) en LangSmith detallando la traza interna de una consulta multi-intención: invocación al Supervisor (ChatOpenAI), delegación paralela a sub-agentes especialistas (`run_specialized_agent`) y ejecución de herramientas MCP (`record_expense`, `record_reminder`).*
+
 **Logging estructurado.** Cada módulo utiliza el sistema estándar de logging de Python (`logging.getLogger(__name__)`), lo que permite configurar el nivel de detalle por módulo. En el nivel `INFO`, se registran las decisiones de guardarrail y enrutamiento. En el nivel `WARNING`, se registran bloqueos de guardarrail y errores de API. En el nivel `DEBUG`, se registra el contenido completo de los mensajes y respuestas.
 
 ---
@@ -1110,6 +1111,10 @@ Las líneas de trabajo futuro identificadas se agrupan en dos categorías:
 - **Soporte de WhatsApp.** Integrar la API de WhatsApp Business (via Twilio o API oficial de Meta) para cubrir el canal de mensajería más utilizado en España y América Latina.
 
 **Extensiones del sistema:**
+
+- **Ampliación de cobertura geográfica RAG (Global):** Extender el vectorstore de ChromaDB incorporando documentos oficiales de normativas, visados y requisitos de entrada para destinos fuera de Europa (como Estados Unidos, Japón, Latinoamérica, Asia y África), superando la limitación del alcance europeo del MVP actual.
+
+- **Soporte multilingüe extendido:** Adaptar la capa de guardarrailes (clasificador LLM) y el sistema de enrutamiento por palabras clave del Supervisor para ofrecer soporte nativo en múltiples idiomas adicionales (como francés, alemán, portugués e italiano), expandiendo el alcance del asistente más allá del soporte bilingüe actual (español e inglés).
 
 - **Nuevos servidores MCP.** La arquitectura MCP facilita la adición de nuevos dominios funcionales sin modificar el orquestador. Servidores candidatos: reservas de alojamiento (via APIs de Booking o Airbnb), cambio de divisas en tiempo real, alertas de precio de vuelos.
 
@@ -1220,7 +1225,7 @@ docker compose up --build
 ```bash
 # OpenAI (obligatorio)
 OPENAI_API_KEY=sk-your-key-here
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5-nano
 
 # Embeddings RAG (modelo local, sin coste)
 EMBEDDING_MODEL=all-MiniLM-L6-v2

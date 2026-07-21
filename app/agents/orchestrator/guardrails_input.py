@@ -4,7 +4,7 @@ Guardarraíl de entrada — enfoque híbrido: prefiltro regex rápido + clasific
 Arquitectura:
   1. Prefiltro regex (< 1 ms, sin coste de API): captura patrones de ataque
      inequívocos y de alta confianza (tokens de plantilla, DAN, cadenas conocidas de jailbreak).
-  2. Clasificador LLM (gpt-4o-mini, una llamada estructurada): detecta validez del idioma
+  2. Clasificador LLM (gpt-5-nano, una llamada estructurada): detecta validez del idioma
      y ataques semánticos de inyección de prompt que el regex no puede expresar
      (evasiones hipotéticas, jailbreaks de roleplay, condicionamiento many-shot, etc.).
 

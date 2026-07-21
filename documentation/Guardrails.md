@@ -84,7 +84,7 @@ Si algún patrón coincide, el mensaje es bloqueado **inmediatamente** sin llama
 
 ### Etapa 2: Clasificador LLM
 
-Si el pre-filtro no detecta nada, se realiza **una única llamada** a `gpt-4o-mini` con **salida estructurada** (Pydantic):
+Si el pre-filtro no detecta nada, se realiza **una única llamada** a `gpt-5-nano` con **salida estructurada** (Pydantic):
 
 ```python
 class GuardrailDecision(BaseModel):
@@ -134,7 +134,7 @@ Comprobación instantánea (< 1 ms, sin coste de API). Captura fugas con firmas 
 
 ### Etapa 2: Inspector LLM semántico
 
-Si el pre-filtro no detecta nada, se realiza **una única llamada** a `gpt-4o-mini` con salida estructurada:
+Si el pre-filtro no detecta nada, se realiza **una única llamada** a `gpt-5-nano` con salida estructurada:
 
 ```python
 class OutputIntegrityDecision(BaseModel):
@@ -169,7 +169,7 @@ save_message (user)                ← siempre persiste antes del guardarrail
       ▼
 await check_input_guardrail(msg)   ← híbrido: regex pre-filtro + LLM clasificador
   ├─ Pre-filtro regex (< 1 ms, sin coste)
-  └─ LLM semántico (gpt-4o-mini, ~200-400 ms)
+  └─ LLM semántico (gpt-5-nano, ~200-400 ms)
       │
       ├─ lang_ok=False  → devuelve REJECTION_MESSAGE_LANGUAGE
       ├─ is_safe=False  → devuelve REJECTION_MESSAGE_INJECTION
@@ -186,7 +186,7 @@ run_specialized_agent(s) en paralelo
       ▼
 await check_output_integrity(resp) ← híbrido: regex pre-filtro + LLM inspector
   ├─ Pre-filtro regex (< 1 ms, sin coste)
-  └─ LLM semántico (gpt-4o-mini, ~200-400 ms)
+  └─ LLM semántico (gpt-5-nano, ~200-400 ms)
       │
       └─ fuga detectada → REJECTION_MESSAGE_OUTPUT_LEAK
       └─ limpio → devuelve respuesta al usuario

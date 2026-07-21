@@ -5,7 +5,7 @@ La arquitectura refleja la del guardarraíl de entrada:
   1. Prefiltro regex (< 1 ms, sin coste de API): captura fugas de información
      inequívocas y de alta confianza — trazas de Python, formatos conocidos de claves de API,
      tokens de plantilla, marcadores literales de prompt del sistema, marcado de llamadas a herramientas.
-  2. Inspector LLM (gpt-4o-mini, una llamada estructurada): detecta fugas sutiles o indirectas
+  2. Inspector LLM (gpt-5-nano, una llamada estructurada): detecta fugas sutiles o indirectas
      que el regex no puede expresar — secretos ofuscados o parciales, fragmentos parafraseados
      del prompt del sistema, PII involuntario de otras sesiones, código o
      detalles de implementación incrustados en la respuesta.
