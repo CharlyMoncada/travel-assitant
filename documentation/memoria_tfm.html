@@ -43,6 +43,8 @@
         @media print {
             body {
                 background: #ffffff;
+                font-size: 10.5pt;
+                line-height: 1.5;
             }
             .document-container {
                 max-width: 100%;
@@ -51,16 +53,86 @@
             }
             @page {
                 size: A4;
-                margin: 2.5cm 2cm 2.5cm 2cm;
+                margin: 1.8cm 1.8cm 1.8cm 1.8cm;
             }
             .page-break {
                 page-break-before: always;
             }
-            h1, h2, h3 {
+            h1 {
+                font-size: 19pt;
+                margin-top: 24px;
+                margin-bottom: 12px;
                 page-break-after: avoid;
             }
-            pre, table, .mermaid-box, figure {
+            h2 {
+                font-size: 14.5pt;
+                margin-top: 20px;
+                margin-bottom: 10px;
+                page-break-after: avoid;
+            }
+            h3 {
+                font-size: 12pt;
+                margin-top: 15px;
+                margin-bottom: 8px;
+                page-break-after: avoid;
+            }
+            h4 {
+                font-size: 10.5pt;
+                margin-top: 12px;
+                margin-bottom: 6px;
+                page-break-after: avoid;
+            }
+            p {
+                margin-bottom: 10px;
+            }
+            pre {
+                margin: 14px 0;
+                padding: 12px 14px;
+                font-size: 8.5pt;
+                line-height: 1.4;
                 page-break-inside: avoid;
+            }
+            table {
+                margin: 14px 0;
+                font-size: 9pt;
+                page-break-inside: avoid;
+            }
+            th, td {
+                padding: 7px 9px;
+            }
+            figure.ui-screenshot {
+                margin: 20px 0;
+                padding: 16px;
+                page-break-inside: avoid;
+            }
+            figure.ui-screenshot img {
+                max-height: 350px;
+                max-width: 90%;
+                height: auto;
+                width: auto;
+                display: block;
+                margin: 0 auto 14px auto;
+            }
+            figure.ui-screenshot figcaption {
+                font-size: 9.5pt;
+                color: var(--text-muted);
+                font-style: italic;
+                margin-top: 10px;
+                display: block;
+                clear: both;
+                font-weight: 500;
+            }
+            .mermaid-box {
+                margin: 16px 0;
+                padding: 12px;
+                page-break-inside: avoid;
+            }
+            ul, ol {
+                margin-top: 4px;
+                margin-bottom: 8px;
+            }
+            li {
+                margin-bottom: 4px;
             }
             a {
                 text-decoration: none;
@@ -2087,10 +2159,6 @@ curl -X POST http://localhost:8000/message \
   | python3 -m json.tool
 </code></pre>
 <hr />
-<p><em>Fin de la memoria del Trabajo Fin de Máster</em>
-<em>Travel Assistant — Sistema Agéntico de Asistencia al Viajero</em>
-<em>Grupo: Amaya Rosa Gil Pippino, Carmen Malia, Carlos Moncada</em>
-<em>Julio 2026</em></p>
 
 </div>
 
