@@ -1463,12 +1463,14 @@ python -m app.main                  # Terminal 3
 </tr>
 </tbody>
 </table>
-<p><strong>Componentes de coste cero adicionales:</strong>
-- Embeddings para RAG: generados localmente con <code>all-MiniLM-L6-v2</code> ($0.00)
-- Base de datos vectorial ChromaDB: ejecución local ($0.00)
-- Base de datos SQLite: ejecución local ($0.00)
-- API meteorológica wttr.in: pública y gratuita ($0.00)
-- Infraestructura de hosting: Docker en servidor propio (coste de infraestructura según entorno)</p>
+<p><strong>Componentes de coste cero adicionales:</strong></p>
+<ul>
+<li>Embeddings para RAG: generados localmente con <code>all-MiniLM-L6-v2</code> ($0.00)</li>
+<li>Base de datos vectorial ChromaDB: ejecución local ($0.00)</li>
+<li>Base de datos SQLite: ejecución local ($0.00)</li>
+<li>API meteorológica wttr.in: pública y gratuita ($0.00)</li>
+<li>Infraestructura de hosting: Docker en servidor propio (coste de infraestructura según entorno)</li>
+</ul>
 <p>La elección de gpt-5-nano en lugar de GPT-4o representa un ahorro del 94% en costes de inferencia con una degradación de rendimiento marginal para el caso de uso de este proyecto (enrutamiento y function calling en dominios bien definidos, no razonamiento complejo).</p>
 <h3 id="55-analisis-de-errores-y-limitaciones">5.5 Análisis de errores y limitaciones</h3>
 <p><strong>Mensajes muy cortos o en un único idioma ambiguo.</strong> Mensajes de 1-2 palabras como "gastos", "ok" o "hola" son correctamente procesados por el guardarrail (bypass para textos cortos). Sin embargo, mensajes en idiomas con léxico cercano al español (portugués, italiano, gallego) pueden ocasionalmente pasar el guardarrail de idioma si el clasificador LLM los interpreta como español.</p>
