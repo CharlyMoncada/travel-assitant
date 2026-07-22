@@ -1619,14 +1619,16 @@ async def test_french_blocked(self):
     self.assertIsNone(reason)
 </code></pre>
 <h3 id="64-observabilidad-en-produccion">6.4 Observabilidad en producción</h3>
-<p><strong>LangSmith.</strong> La integración con LangSmith proporciona trazabilidad completa de cada conversación. El decorador <code>@traceable</code> sobre <code>handle_message()</code> genera automáticamente una traza que incluye:
-- El mensaje de entrada del usuario
-- El resultado del guardarrail de entrada (bloqueado/permitido)
-- La decisión de enrutamiento del Supervisor (rutas seleccionadas)
-- Cada invocación al LLM de cada sub-agente con su prompt completo y respuesta
-- Cada llamada a herramienta MCP con sus argumentos y el resultado devuelto
-- El resultado del guardarrail de salida
-- La latencia de cada componente</p>
+<p><strong>LangSmith.</strong> La integración con LangSmith proporciona trazabilidad completa de cada conversación. El decorador <code>@traceable</code> sobre <code>handle_message()</code> genera automáticamente una traza que incluye:</p>
+<ul>
+<li>El mensaje de entrada del usuario</li>
+<li>El resultado del guardarrail de entrada (bloqueado/permitido)</li>
+<li>La decisión de enrutamiento del Supervisor (rutas seleccionadas)</li>
+<li>Cada invocación al LLM de cada sub-agente con su prompt completo y respuesta</li>
+<li>Cada llamada a herramienta MCP con sus argumentos y el resultado devuelto</li>
+<li>El resultado del guardarrail de salida</li>
+<li>La latencia de cada componente</li>
+</ul>
 <p>Esta observabilidad permite diagnosticar rápidamente problemas de enrutamiento incorrecto, herramientas MCP que devuelven resultados inesperados, o prompts que generan respuestas fuera del scope esperado.</p>
 <figure class="ui-screenshot">
     <img src="images/langsmith_trace_list.png" alt="Figura 6.1: Vista general del panel de trazabilidad de LangSmith mostrando el listado de ejecuciones, latencias P95, consumo de tokens e interceptaciones del guardarrail." />
