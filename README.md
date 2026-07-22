@@ -49,17 +49,17 @@ flowchart TB
     end
 
     subgraph Backend ["Capa de Presentación y Orquestación (Port 8000)"]
-        API[" FastAPI (POST /message)"]
-        Router["🛠️ TravelAgentOrchestrator<br/>(Memoria, Conexión MCP, TTL & Guardrails)"]
+        API["⚡ FastAPI (POST /message)"]
+        Router["🛠️ TravelAgentOrchestrator<br/>(Memoria, Conexión MCP, TTL e Integridad)"]
         
         subgraph Routing ["Orquestación Cognitiva"]
-            Supervisor["🧠 Supervisor LLM<br/>(Bilingual Keywords, Sticky Routing & Multi-intent)"]
+            Supervisor["🧠 Supervisor LLM<br/>(Bilingual Keywords, Sticky Routing y Multi-intent)"]
         end
         
         subgraph Agents ["Sub-Agentes Especialistas Modulares"]
             FA["💰 Finance Agent<br/>(Prompt financiero + Tools de gastos)"]
             RA["⏰ Reminder Agent<br/>(Prompt recordatorios + Tools CRUD)"]
-            GA["📚 General Agent<br/>(Prompt general + RAG & Local tools)"]
+            GA["📚 General Agent<br/>(Prompt general + RAG y Herramientas locales)"]
             REC["🎒 Recommender Agent<br/>(Prompt equipaje + wttr.in + CSV)"]
         end
     end
@@ -80,15 +80,15 @@ flowchart TB
     API --> Router
     
     %% Flujo de Orquestación e Intención
-    Router -->|1. Filtrar Historial conversacional limpio| Supervisor
-    Supervisor -->|2a. Pequeña Charla o Aclaración Directa| Router
-    Supervisor -->|2b. Identificar Ruta Semántica [ROUTES]| Router
-    Router -->|3. Ejecución Secuencial| Agents
+    Router -->|"1. Filtrar Historial conversacional limpio"| Supervisor
+    Supervisor -->|"2a. Pequeña Charla o Aclaración Directa"| Router
+    Supervisor -->|"2b. Identificar Ruta Semántica (ROUTES)"| Router
+    Router -->|"3. Ejecución Secuencial"| Agents
 
     %% Enlace a herramientas MCP remotas
-    FA -->|Llamada SSE| FM
-    RA -->|Llamada SSE| RM
-    GA -->|Tools Locales / RAG| VectorDB
+    FA -->|"Llamada SSE"| FM
+    RA -->|"Llamada SSE"| RM
+    GA -->|"Herramientas Locales / RAG"| VectorDB
     REC -->|"get_weather (wttr.in)"| Internet(["🌐 wttr.in API"])
     REC -->|"get_packing_items (CSV)"| CSV(["📄 app/data/objetos.csv"])
     
