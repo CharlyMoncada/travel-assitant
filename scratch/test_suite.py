@@ -6,6 +6,10 @@ import os
 import time
 from pathlib import Path
 
+os.environ["TRANSFORMERS_OFFLINE"] = "1"
+os.environ["HF_HUB_OFFLINE"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 # Añadir la raíz del proyecto a sys.path
 project_root = str(Path(__file__).resolve().parent.parent)
 if project_root not in sys.path:
@@ -142,6 +146,20 @@ class TestAgentFocusDirectives(unittest.TestCase):
         self.assertTrue(len(directive) > 0)
         self.assertIn("Finance", directive)
         self.assertIn("finance-related", directive)
+
+    def test_finance_prompt_euro_currency_rule(self):
+        from app.agents.finance.prompts import get_finance_system_prompt
+        prompt = get_finance_system_prompt()
+        self.assertIn("CURRENCY DIRECTIVE", prompt)
+        self.assertIn("Euros (€)", prompt)
+
+    def test_non_euro_currency_rejection_rule(self):
+        """Verifica que el prompt prohíba explícitamente invocar herramientas cuando la moneda no es Euro."""
+        from app.agents.finance.prompts import get_finance_system_prompt
+        prompt = get_finance_system_prompt()
+        self.assertIn("do NOT call any tool", prompt)
+        self.assertIn("dollars, USD, $, pounds, GBP, £, yen, ¥, pesos", prompt)
+        self.assertIn("El asistente actualmente opera únicamente con gastos en Euros (€)", prompt)
 
     def test_reminder_focus_directive(self):
         directive = SubAgentExecutor.get_agent_focus_directive("reminder")
@@ -356,6 +374,21 @@ class TestHybridGuardrailLLM(unittest.IsolatedAsyncioTestCase):
 
         self.assertTrue(lang_ok, "Debe fallar abierto ante error de API")
         self.assertTrue(is_safe, "Debe fallar abierto ante error de API")
+        self.assertIsNone(reason)
+
+    async def test_timeout_error_fails_open(self):
+        """Si la API del guardarraíl LLM da timeout ([Errno 60]), debe fallar abierto inmediatamente."""
+        from app.agents.orchestrator.guardrails_input import check_input_guardrail
+        from unittest.mock import patch, MagicMock
+
+        mock_llm = MagicMock()
+        mock_llm.with_structured_output.side_effect = TimeoutError("[Errno 60] Operation timed out")
+
+        with patch("app.agents.orchestrator.guardrails_input.ChatOpenAI", return_value=mock_llm):
+            lang_ok, is_safe, reason = await check_input_guardrail("dime mis gastos")
+
+        self.assertTrue(lang_ok, "Debe fallar abierto ante timeout de API")
+        self.assertTrue(is_safe, "Debe fallar abierto ante timeout de API")
         self.assertIsNone(reason)
 
 
@@ -896,10 +929,12 @@ class TestOrchestratorConcurrency(unittest.IsolatedAsyncioTestCase):
             orchestrator.mcp_manager.discover_mcp_tools = AsyncMock(return_value={})
             orchestrator._save_long_term_memory_if_needed = MagicMock()
             
-            # Medir el tiempo de ejecución
-            start_time = time.time()
-            res = await orchestrator.handle_message("Agregar un gasto y un recordatorio para Berlín", thread_id="test_concurrency")
-            elapsed = time.time() - start_time
+            with unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", AsyncMock(return_value=(True, True, None))), \
+                 unittest.mock.patch("app.agents.orchestrator.orchestrator.check_output_integrity", AsyncMock(return_value=(True, None))):
+                # Medir el tiempo de ejecución
+                start_time = time.time()
+                res = await orchestrator.handle_message("Agregar un gasto y un recordatorio para Berlín", thread_id="test_concurrency")
+                elapsed = time.time() - start_time
 
             # Aserción de temporización de concurrencia (debería ser ~0.5s, definitivamente < 1.0s)
             self.assertLess(elapsed, 1.0, f"La ejecución tardó {elapsed}s, lo que implica bloqueo secuencial.")
@@ -1384,6 +1419,43 @@ class TestPipelineMessagePersistence(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(any("Hola" in m for m in assistant_messages))
 
 
+class TestFormatAgentResponse(unittest.TestCase):
+    """Pruebas para format_agent_response en orchestrator.py."""
+
+    def test_formats_supervisor_response(self):
+        from app.agents.orchestrator import format_agent_response
+
+        raw = {
+            "llm_used": True,
+            "llm_tool": "supervisor_chat",
+            "agent_used": "supervisor",
+            "tool_response": None,
+            "message": "Hola, ¿en qué puedo ayudarte?",
+        }
+        formatted = format_agent_response(raw)
+        self.assertIn("🤖 Agent: Supervisor (Router)", formatted["message"])
+        self.assertIn("🛠️ Flow: supervisor_chat", formatted["message"])
+        self.assertTrue(formatted["message"].startswith("Hola, ¿en qué puedo ayudarte?"))
+
+    def test_formats_specialized_agent_response(self):
+        from app.agents.orchestrator import format_agent_response
+
+        raw = {
+            "llm_used": True,
+            "llm_tool": "langchain_agent_via_mcp",
+            "agent_used": "finance",
+            "tool_response": {
+                "messages": [
+                    unittest.mock.MagicMock(tool_calls=[{"name": "save_expense"}])
+                ]
+            },
+            "message": "Gasto guardado correctamente.",
+        }
+        formatted = format_agent_response(raw)
+        self.assertIn("🤖 Agent: Finance Specialist", formatted["message"])
+        self.assertIn("🛠️ MCP/Local Tools: save_expense", formatted["message"])
+
+
 class TestRAGTextProcessing(unittest.TestCase):
     """Pruebas para los auxiliares de procesamiento de texto puro en app.services.rag.
     Sin ChromaDB, sin embeddings, sin LLM — todas las funciones son deterministas."""
@@ -1740,21 +1812,32 @@ class TestRAGPDFExtraction(unittest.TestCase):
 class TestRAGStatus(unittest.TestCase):
     """Pruebas para rag_status() con colección ChromaDB mockeada."""
 
+    def test_rag_status_uninitialized(self):
+        from app.services.rag import rag_status
+
+        with unittest.mock.patch("app.services.rag._collection", None):
+            status = rag_status()
+
+        self.assertFalse(status["initialized"])
+        self.assertIsNone(status["document_count"])
+
     def test_rag_status_returns_all_expected_keys(self):
         from app.services.rag import rag_status
 
         mock_col = MagicMock()
         mock_col.count.return_value = 42
 
-        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+        with unittest.mock.patch("app.services.rag._collection", mock_col):
             status = rag_status()
 
         expected_keys = {
-            "collection_name", "document_count", "persist_directory",
+            "initialized", "collection_name", "document_count", "persist_directory",
             "embedding_model", "chunk_size", "chunk_overlap",
             "query_candidates", "max_distance",
         }
         self.assertEqual(set(status.keys()), expected_keys)
+        self.assertTrue(status["initialized"])
+        self.assertEqual(status["document_count"], 42)
 
     def test_rag_status_document_count_matches_collection(self):
         from app.services.rag import rag_status
@@ -1762,7 +1845,7 @@ class TestRAGStatus(unittest.TestCase):
         mock_col = MagicMock()
         mock_col.count.return_value = 137
 
-        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+        with unittest.mock.patch("app.services.rag._collection", mock_col):
             status = rag_status()
 
         self.assertEqual(status["document_count"], 137)
@@ -1774,7 +1857,7 @@ class TestRAGStatus(unittest.TestCase):
         mock_col = MagicMock()
         mock_col.count.side_effect = Exception("DB error")
 
-        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+        with unittest.mock.patch("app.services.rag._collection", mock_col):
             status = rag_status()
 
         self.assertIsNone(status["document_count"])
@@ -1785,7 +1868,7 @@ class TestRAGStatus(unittest.TestCase):
         mock_col = MagicMock()
         mock_col.count.return_value = 0
 
-        with unittest.mock.patch("app.services.rag.init_rag", return_value=mock_col):
+        with unittest.mock.patch("app.services.rag._collection", mock_col):
             status = rag_status()
 
         self.assertEqual(status["collection_name"], COLLECTION_NAME)
@@ -2862,13 +2945,15 @@ class TestTravelSearchTool(unittest.IsolatedAsyncioTestCase):
         async def mock_search_crash(query, **kwargs):
             raise RuntimeError("unexpected network failure")
 
-        with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
-             unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message", side_effect=fake_save), \
-             unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
-             unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):
-            await orch.handle_message("Hola", thread_id="t-persist-sup")
+        with unittest.mock.patch("app.agents.general.tools.is_brave_available", return_value=True), \
+             unittest.mock.patch("app.agents.general.tools.brave_web_search", side_effect=mock_search_crash):
+            from app.agents.general.tools import make_travel_search_coroutine
+            fn = make_travel_search_coroutine()
+            output = await fn("vuelos a Roma")
 
-        self.assertTrue(any("Hola" in m for m in assistant_messages))
+        parsed = _json.loads(output)
+        self.assertIn("error", parsed)
+        self.assertIn("unexpected network failure", parsed["error"])
 
 
 class TestMCPConnectivity(unittest.TestCase):

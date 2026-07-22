@@ -14,6 +14,7 @@ logging.basicConfig(
 )
 
 
+import asyncio
 from contextlib import asynccontextmanager
 import httpx
 from fastapi import FastAPI
@@ -22,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from .api.endpoints import router as api_router
 from .agents.orchestrator import TravelAgentOrchestrator
 from .services.persistence.db import init_db
+from .services.rag import init_rag
 from .connectors.telegram_bot import TelegramBotService
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -36,8 +38,15 @@ async def lifespan(app: FastAPI):
     global telegram_service
     # Inicio: inicializar BD, RAG y httpx.AsyncClient
     init_db()
-    # RAG se inicializa bajo demanda al llamar query_normative_documents()
     
+    # Pre-cargar RAG al arrancar el servidor para evitar latencia en la primera consulta del usuario
+    try:
+        logger.info("Pre-loading RAG collection during application startup...")
+        await asyncio.to_thread(init_rag)
+        logger.info("RAG collection pre-loaded successfully during startup.")
+    except Exception as exc:
+        logger.warning("Could not pre-load RAG during startup: %s", exc)
+
     app.state.http_client = httpx.AsyncClient(timeout=3.0)
     
     # Preconectar los servidores MCP para evitar latencia en el primer mensaje

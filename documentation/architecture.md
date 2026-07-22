@@ -208,5 +208,5 @@ El procesamiento de cualquier solicitud en el sistema sigue una secuencia estruc
 4. **Filtrado Selectivo del Historial y Poda**: El Router compila un historial de chat limpio y recorta el contexto de ser necesario.
 5. **Orquestación y Enrutamiento Cognitivo**: El Supervisor LLM clasifica el mensaje y determina la lista de destinos (`routes: list[str]`). Si es Smalltalk o requiere clarificación, responde directamente al usuario.
 6. **Ejecución Concurrente Especialista**: Por cada ruta devuelta, el orquestador invoca de forma paralela/concurrente a los sub-agentes especialistas correspondientes (`finance`, `reminder`, `general`, `recommender`) utilizando `asyncio.gather()`, acelerando los tiempos de respuesta hasta en un 3x antes de acumular sus respuestas en una sola.
-7. **Capa de Seguridad Global (Output Guardrails)**: Comprueba la integridad del texto compilado final antes de enviarlo.
-8. **Inferencia y Respuesta**: Guarda el mensaje consolidado y lo transmite al cliente.
+7. **Capa de Seguridad Global (Output Guardrails)**: Comprueba la integridad del texto compilado final con un tiempo límite de 5.0 s (*fail-open*) antes de enviarlo.
+8. **Inferencia, Formateo Unificado y Respuesta**: Enriquece el mensaje con la firma de metadatos del agente y herramientas ejecutadas (`format_agent_response`), guarda el mensaje consolidado en la persistencia SQLite y lo transmite al cliente web o Telegram.

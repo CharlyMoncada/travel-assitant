@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import time
@@ -76,7 +77,7 @@ class MCPConnectionManager:
 
             try:
                 await self.stack.aclose()
-            except Exception as e:
+            except BaseException as e:
                 logger.warning("Error closing connection stack: %s", e)
 
             self.stack = None
@@ -222,6 +223,9 @@ class MCPConnectionManager:
                 }
                 langchain_tools_by_server[url] = server_tools
 
+            except asyncio.CancelledError:
+                logger.info("MCP tool discovery cancelled during shutdown.")
+                raise
             except Exception as e:
                 logger.warning(
                     "Error listing tools for %s: %s. Removing session.",

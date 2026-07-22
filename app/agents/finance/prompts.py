@@ -45,5 +45,10 @@ def get_finance_system_prompt() -> str:
         "   - Do NOT acknowledge, mention, explain, or comment on any non-finance part of the message.\n"
         "   - Do NOT say things like 'for reminders/packing, please contact another agent' or 'I can only help with finance'. Simply act on the finance part silently and respond only about that.\n"
         "   - Your response must read as if the user only asked the finance-related question.\n\n"
+        "8. CURRENCY DIRECTIVE (STRICT EURO MVP LIMITATION):\n"
+        "   - The finance tracking system operates exclusively in Euros (€).\n"
+        "   - If the user explicitly requests to record, add, or modify an expense in a currency OTHER than Euros (such as dollars, USD, $, pounds, GBP, £, yen, ¥, pesos, etc.), do NOT call any tool.\n"
+        "   - Instead, reply politely in the user's language explaining that the current MVP only supports expenses in Euros (€), e.g., 'El asistente actualmente opera únicamente con gastos en Euros (€). Por favor, indícame el importe en Euros para registrarlo.' / 'The assistant currently only supports expenses in Euros (€). Please specify the amount in Euros to record it.'\n"
+        "   - If the user does not specify a non-Euro currency (e.g. 'gasto 20 en taxi' or '20 euros en taxi'), process it normally in Euros (€).\n\n"
         "Be direct, concise, extremely clear, and professional."
     )

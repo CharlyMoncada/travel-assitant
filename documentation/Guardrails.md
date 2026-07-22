@@ -108,11 +108,15 @@ El LLM recibe un prompt de sistema específico que describe:
 
 Si la API de OpenAI no está disponible, el guardarrail **permite el paso** del mensaje y registra un warning:
 
+### Degradación controlada (fail-open) y control de timeouts
+
+Si la API del LLM no responde en un tiempo máximo de **5.0 segundos** (`request_timeout=5.0`, configurable mediante la variable de entorno `GUARDRAIL_TIMEOUT`), o si la conexión sufre un tiempo de espera agotado (`[Errno 60] Operation timed out`), la llamada al clasificador falla abierto (*fail-open*), permitiendo el mensaje y registrando una advertencia en los logs:
+
 ```
-LLM guardrail API error — failing open (message allowed): <error>
+LLM guardrail API error — failing open (message allowed): [Errno 60] Operation timed out
 ```
 
-**Justificación:** Un guardarrail que bloquee todos los mensajes cuando la API cae haría inutilizable el asistente completo. El riesgo de un ataque durante un periodo de caída de la API es menor que el riesgo de denegar servicio a todos los usuarios legítimos.
+**Justificación:** Un guardarrail que se bloquee o cuelgue durante 60 segundos por un fallo de socket en la API haría inutilizable el asistente completo. Al acotar el tiempo de espera a 5.0 segundos con un único intento (`max_retries=1`), se garantiza una experiencia fluida manteniendo la disponibilidad del sistema.
 
 ---
 

@@ -58,7 +58,12 @@ def _build_client():
 
 
 def _build_embedding_function():
-    return SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
+    try:
+        return SentenceTransformerEmbeddingFunction(model_name=EMBEDDING_MODEL)
+    except Exception as e:
+        logger.warning("SentenceTransformerEmbeddingFunction failed (%s). Falling back to DefaultEmbeddingFunction.", e)
+        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+        return DefaultEmbeddingFunction()
 
 
 def _remove_pdf_noise(text: str) -> str:
@@ -479,14 +484,18 @@ def query_normative_documents(
 
 
 def rag_status() -> dict:
-    collection = init_rag()
+    global _collection
 
-    try:
-        count = collection.count()
-    except Exception:
-        count = None
+    initialized = _collection is not None
+    count = None
+    if initialized:
+        try:
+            count = _collection.count()
+        except Exception:
+            count = None
 
     return {
+        "initialized": initialized,
         "collection_name": COLLECTION_NAME,
         "document_count": count,
         "persist_directory": str(PERSIST_DIR),

@@ -128,24 +128,27 @@ Los chatbots de viaje existentes presentan tres déficits fundamentales:
 
 ### 1.4 Alcance del MVP
 
-El proyecto entrega un MVP (Producto Mínimo Viable) funcional que incluye:
+El proyecto entrega un MVP (Producto Mínimo Viable) funcional con delimitaciones explícitas de alcance:
 
-- Gestión completa de gastos de viaje (CRUD) vía lenguaje natural
-- Gestión completa de recordatorios e itinerario (CRUD) vía lenguaje natural
-- Consulta de normativa de viaje europea mediante RAG
-- Búsqueda web de logística de viaje (vuelos, hoteles)
-- Recomendación de equipaje basada en clima real del destino
-- Memoria de usuario a corto y largo plazo
-- Guardarrailes de seguridad en entrada y salida
-- Despliegue en tres procesos Docker coordinados
+#### Funcionalidades Incluidas en el MVP:
 
-**Fuera del alcance del MVP:**
-- Reserva o compra efectiva de vuelos, hoteles o entradas (solo información)
-- Notificaciones proactivas por Telegram sin intervención del usuario
-- Cobertura normativa de destinos no europeos
-- Fine-tuning propio de modelos de lenguaje
-- Integración con WhatsApp (requiere cuenta business verificada de Meta)
-- Soporte multiusuario con autenticación (cada sesión se identifica por `thread_id`)
+- ✅ **Gestión completa de gastos de viaje (CRUD):** Registro, consulta, modificación y eliminación en Euros (€) mediante lenguaje natural.
+- ✅ **Gestión completa de recordatorios e itinerario (CRUD):** Creación y control de alertas con resolución inteligente de fechas relativas.
+- ✅ **Consulta normativa mediante RAG:** Recuperación semántica sobre documentos oficiales para destinos europeos.
+- ✅ **Búsqueda web de logística en tiempo real:** Búsqueda de vuelos, hoteles y transportes vía Brave Search con degradación controlada.
+- ✅ **Recomendación de equipaje por clima real:** Inferencia de objetos necesarios según la previsión meteorológica del destino.
+- ✅ **Memoria de usuario a corto y largo plazo:** Historial conversacional y persistencia de preferencias declaradas (UPSERT en SQLite).
+- ✅ **Guardarrailes de seguridad bidireccionales:** Protección híbrida (Regex + LLM) contra inyecciones de prompt y fugas de datos.
+- ✅ **Despliegue reproducibilidad y arquitectura:** Orquestación multi-agente con 2 servidores MCP en 3 procesos Docker coordinados.
+
+#### Funcionalidades Fuera del alcance del MVP:
+
+- ❌ **Reserva o compra efectiva de servicios:** El sistema ofrece información logística pero no realiza transacciones o compras reales.
+- ❌ **Notificaciones push proactivas:** Envío automático de alertas por Telegram sin previa interacción del usuario en el turno.
+- ❌ **Cobertura normativa de destinos no europeos:** Consultas RAG de visados o vacunas para destinos fuera de Europa.
+- ❌ **Fine-tuning de modelos de lenguaje:** Entrenamiento o modificación de pesos internos de los LLMs.
+- ❌ **Integración con WhatsApp:** Conexión con la API de WhatsApp Business (requiere cuenta verificada de Meta).
+- ❌ **Soporte multiusuario con autenticación:** Sistema de usuarios con login/contraseña (cada sesión se aísla de forma independiente por `thread_id`).
 
 ### 1.5 Estructura de la memoria
 
@@ -577,6 +580,10 @@ async def handle_message(self, message: str, thread_id: str) -> dict:
 
 **Características técnicas destacadas:**
 
+**Formateador unificado de respuestas (`format_agent_response`).** El orquestador proporciona una función de formateo de metadatos compartida tanto por el endpoint HTTP REST (`POST /message`) como por el conector de Telegram. Esta función enriquece automáticamente la respuesta del usuario con la firma visual del agente especialista invocado (`🤖 Agent: ...`) y la lista de herramientas MCP o locales ejecutadas (`🛠️ MCP/Local Tools: ...`), garantizando coherencia absoluta de formato independientemente del canal.
+
+**Precarga asíncrona de RAG en arranque (`lifespan`).** Durante el evento de inicio del servidor en FastAPI (`main.py`), la colección vectorial de ChromaDB y el modelo de embeddings se cargan de forma asíncrona en un hilo secundario mediante `await asyncio.to_thread(init_rag)`. Esto elimina por completo la latencia de inicialización en la primera consulta normativa del usuario y permite respuestas inmediatas y no bloqueantes en las comprobaciones de salud del sistema (`GET /status`).
+
 **Caché TTL de herramientas MCP.** El descubrimiento de herramientas MCP implica una llamada HTTP a cada servidor. Para evitar esta latencia en cada mensaje, el orquestador almacena en caché las herramientas descubiertas con un TTL de 300 segundos (5 minutos). Las herramientas se redescubren automáticamente cuando el caché expira.
 
 **Traducción dinámica JSON → Pydantic V2.** Los servidores MCP devuelven los esquemas de parámetros de sus herramientas como JSON plano (`inputSchema`). El componente `MCPSchemaTranslator` convierte estos esquemas en modelos Pydantic V2 tipados en tiempo de ejecución mediante `create_model()`, que LangChain utiliza para validar los argumentos de cada invocación de herramienta.
@@ -630,6 +637,8 @@ El Finance Agent gestiona el ciclo completo de vida de los gastos del viaje, acc
 - **Categorías canónicas de gastos:** Al registrar un gasto, el agente clasifica automáticamente en categorías estandarizadas bilingües: `Comida / Food`, `Transporte / Transport`, `Alojamiento / Accommodation`, `Entretenimiento / Entertainment`, `Otros / Others`. Esto permite análisis por categoría independientemente del idioma en que se registró el gasto.
 
 - **Resolución de fechas relativas:** El prompt inyecta la fecha y hora actuales, permitiendo que el agente interprete expresiones como "ayer", "la semana pasada" o "last month" al filtrar resultados de `query_expenses`.
+
+- **Limitación estricta de divisa (Euros €):** El sistema opera exclusivamente en Euros (€). Si el usuario intenta registrar o modificar un gasto indicando una moneda distinta (dólares, libras, yenes, pesos, etc.), el agente no invoca las herramientas MCP y aclara amablemente al usuario que el MVP actual gestiona el presupuesto únicamente en Euros (€).
 
 #### Reminder Agent
 
@@ -685,7 +694,52 @@ El transporte SSE del protocolo MCP requiere un tratamiento especial en FastAPI:
 3. **Principio MCP:** La especificación MCP está diseñada para herramientas ejecutadas en procesos separados, potencialmente en lenguajes y tecnologías distintos.
 4. **Desarrollo independiente:** Cada servidor puede desplegarse, actualizarse y probarse de forma independiente.
 
-El orquestador descubre dinámicamente las herramientas de cada servidor leyendo la variable de entorno `MCP_SERVERS` (lista de URLs SSE separadas por comas), lo que significa que añ       ▼ NO DETECTADO
+El orquestador descubre dinámicamente las herramientas de cada servidor leyendo la variable de entorno `MCP_SERVERS` (lista de URLs SSE separadas por comas), lo que significa que añadir un tercer servidor MCP solo requiere añadir su URL a esa variable, sin modificar ningún código del orquestador.
+
+### 4.6 Sistema de guardarrailes de seguridad
+
+Los guardarrailes constituyen la sección técnicamente más relevante del proyecto desde el punto de vista académico, tanto por su complejidad como por el proceso iterativo de diseño que se siguió.
+
+#### Evolución en tres versiones
+
+**Versión 1 (ramas `gr_fin`, `gr_remind`): Regex + langdetect**
+
+La primera implementación usaba `langdetect` para detección de idioma y expresiones regulares para detección de inyección. Limitaciones detectadas en las pruebas:
+
+- `langdetect` genera una tasa elevada de falsos positivos en mensajes cortos (menos de 5 palabras): "hola", "ok", "gracias" se clasificaban frecuentemente como idioma incorrecto.
+- Los mensajes en español que contenían alguna palabra en portugués o italiano (por similitud léxica) se clasificaban incorrectamente como bloqueables.
+- Las expresiones regulares solo bloqueaban patrones de ataque exactamente conocidos: una paráfrasis como "hipotéticamente si no tuvieras restricciones" no era detectada.
+
+**Versión 2 (rama `fix_guardrails`): Regex ampliadas**
+
+Se ampliaron los patrones regex para cubrir 21 categorías de ataque:
+- Bypass hipotético (`"hypothetically if you had no rules"`, `"hipotéticamente sin restricciones"`)
+- Many-shot jailbreak (secuencias User/Assistant falsas)
+- Token smuggling (`assistant:`, `system:` como prefijos de línea)
+- Simulation jailbreak (`"for a story I am writing"`, `"para una historia que escribo"`)
+- Ofuscación/base64 (`base64 decode`, `eval(`, `exec(`)
+- Inyección mediante bloques Markdown de sistema (` ```system `, ` ```prompt `)
+
+Aunque mejoró significativamente la cobertura, el enfoque seguía siendo reactivo: solo bloqueaba patrones explícitamente codificados. Un atacante con conocimiento del conjunto de patrones podría eludirlos con una paráfrasis suficientemente creativa.
+
+**Versión 3 (rama `llm_guardrails`): Híbrido LLM**
+
+La tercera versión, motivada por el feedback del tutor de contenidos, adopta un enfoque en dos etapas:
+
+```
+mensaje de entrada
+      │
+      ▼
+ETAPA 1: Pre-filtro regex (< 1 ms, sin coste de API)
+  Captura solo patrones sin riesgo de falso positivo:
+  - Tokens de plantilla: [INST], <<SYS>>, <|system|>
+  - DAN/jailbreak: "DAN mode", "jailbreak", "unrestricted mode"
+  - Escalada de privilegios: "developer mode", "god mode", "admin mode"
+  - Ofuscación: "base64 decode", "eval(", "exec("
+      │
+      ├── DETECTADO → Bloqueo inmediato (sin llamada al LLM)
+      │
+      ▼ NO DETECTADO
 ETAPA 2: Clasificador LLM (gpt-5-nano, ~200-400 ms)
   Salida estructurada Pydantic:
   class GuardrailDecision(BaseModel):
@@ -697,11 +751,13 @@ ETAPA 2: Clasificador LLM (gpt-5-nano, ~200-400 ms)
       ├── is_safe == False   → Mensaje de inyección bloqueada
       └── OK → Permitir paso
       │
-POLÍTICA FAIL-OPEN: Si la API del LLM no responde,
-el mensaje se permite y se registra un warning.
+POLÍTICA FAIL-OPEN Y CONTROL DE TIMEOUT: Si la API del LLM no responde
+en un tiempo máximo de 5.0 s (`request_timeout=5.0`, configurable mediante
+`GUARDRAIL_TIMEOUT`), o si la conexión sufre un socket timeout (`[Errno 60]`),
+el clasificador falla abierto (permite el mensaje) y registra una advertencia.
 ```
 
-El guardarrail de salida sigue la misma arquitectura: pre-filtro regex para fugas técnicas (tracebacks Python, claves API en texto literal, marcadores del prompt del sistema) seguido de inspector LLM semántico para fugas indirectas (claves parciales, divulgación implícita de configuración interna, código de implementación embebido en la respuesta).
+El guardarrail de salida sigue la misma arquitectura: pre-filtro regex para fugas técnicas (tracebacks Python, claves API en texto literal, marcadores del prompt del sistema) seguido de inspector LLM semántico para fugas indirectas (claves parciales, divulgación implícita de configuración interna, código de implementación embebido en la respuesta), compartiendo la misma política *fail-open* acotada a 5.0 segundos.
 
 **Justificación académica del enfoque híbrido:**
 
@@ -709,36 +765,6 @@ El guardarrail de salida sigue la misma arquitectura: pre-filtro regex para fuga
 |---|---|---|---|
 | Latencia por mensaje | < 1 ms | ~300 ms | ~300 ms (< 1 ms si pre-filtro bloquea) |
 | Coste por mensaje | $0 | ~$0.0001 | ~$0.0001 (0 si pre-filtro bloquea) |
-| Cobertura técnica | Alta | Alta | Alta |
-| Cobertura semántica | Baja | Alta | Alta |
-| Mantenimiento | Alto | Bajo | Bajo |
-| Resistencia a caída API | No aplica | Ninguna | Fail-open controlado |
-
-El enfoque híbrido satisface simultáneamente los requisitos de robustez semántica (el LLM entiende variaciones y paráfrasis de ataques) y disponibilidad (si la API del clasificador LLM cae, el sistema continúa operativo gracias a la política fail-open, aceptando el riesgo mínimo asociado).
-
-### 4.7 Sistema de memoria
-
-El sistema implementa dos capas de memoria independientes:
-
-**Memoria a corto plazo (historial de conversación).** Cada mensaje del usuario y respuesta del asistente se persiste inmediatamente en la tabla `conversation_messages` de SQLite, identificados por `thread_id`. Antes de cada invocación al Supervisor, el orquestador recupera los últimos N mensajes y los inyecta como historial de conversación. Una función de poda limita el historial a los últimos 3 turnos completos para evitar el crecimiento ilimitado del contexto.
-
-**Memoria a largo plazo (preferencias de usuario).** `ChatMemoryService.detect_memory_to_save()` analiza cada mensaje del usuario buscando expresiones declarativas de preferencias personales de viaje:
-
-```python
-# Ejemplos de mensajes que activan la detección:
-"Mi aeropuerto favorito es Barajas"      → favorite_airport: "Barajas"
-"My budget for this trip is 500 euros"   → budget: "500 euros"
-"Prefiero viajes de mochila"             → travel_style: "mochila"
-"I usually travel light"                  → travel_style: "light"
-```
-
-La detección se implementa mediante expresiones regulares sobre patrones declarativos en español e inglés, sin necesidad de invocar el LLM: coste cero, latencia cero. Las preferencias detectadas se almacenan mediante UPSERT en `user_memories`, garantizando que cada clave de preferencia (`favorite_airport`, `budget`, `travel_style`) solo tiene una entrada vigente por sesión.
-
-En cada nueva invocación, las preferencias almacenadas se recuperan e inyectan como contexto adicional en el prompt del agente, permitiendo respuestas personalizadas: si el usuario declaró previamente que su aeropuerto habitual es Barajas, el agente puede usar esa información sin que el usuario tenga que repetirla.
-
-### 4.8 Integración con servicios externos
-
-**OpenAI API.** Toda la integración con OpenAI se centraliza en `app/services/llm.py`. El modelo a usar se configura mediante la variable de entorno `OPENAI_MODEL`, lo que permite cambiar de `gpt-5-nano` a cualquier otro modelo compatible con function calling sin modificar el código.nsaje | $0 | ~$0.0001 | ~$0.0001 (0 si pre-filtro bloquea) |
 | Cobertura técnica | Alta | Alta | Alta |
 | Cobertura semántica | Baja | Alta | Alta |
 | Mantenimiento | Alto | Bajo | Bajo |
@@ -804,12 +830,21 @@ python -m app.main                  # Terminal 3
 
 El script `start.sh` arranca los tres procesos en paralelo desde una única terminal, redirige los logs a `logs/` y permite detener todo con un único `Ctrl+C`.
 
+#### Optimización de Endpoints API y Buenas Prácticas REST
+
+La capa API del backend principal (`app/api/endpoints.py`) implementa patrones avanzados de diseño FastAPI:
+
+- **Modelos de Respuesta Pydantic (`response_model`):** Validación estricta y tipado OpenAPI/Swagger en todos los endpoints (`StatusResponse`, `ExpenseSummaryResponse`, `RemindersResponse`, `MCPToolsResponse`), garantizando contratos de datos autodescriptivos.
+- **Inyección de Dependencias (`Depends`):** Desacoplamiento de servicios (`get_orchestrator`, `get_http_client`) para facilitar la inyección de mocks en tests unitarios.
+- **Caché en memoria con TTL (3 segundos):** Optimización de latencia en `/status` reduciendo llamadas HTTP innecesarias a los servidores MCP externos en lecturas consecutivas.
+- **Códigos de Estado HTTP Estándar:** Manejo de fallos de infraestructura mediante `HTTPException` (`HTTP 503 Service Unavailable`) en lugar de respuestas 200 con cuerpo de error.
+
 #### Evidencias de Interfaz de Usuario y UX
 
 A continuación se ilustra la interacción conversacional real con la solución a través de sus dos interfaces principales:
 
-![Figura 4.1: Interfaz Web Frontend del Travel Assistant mostrando la gestión conversacional de gastos y recordatorios.](images/ui_web_frontend.png)
-*Figura 4.1: Interfaz Web Frontend del Travel Assistant mostrando la gestión conversacional de gastos y recordatorios.*
+![Figura 4.1: Interfaz Web Frontend del Travel Assistant mostrando la botonera de acciones rápidas (Estado, Gastos, Recordatorios, Herramientas MCP) y la caja de envío de mensajes conversacionales.](images/ui_web_frontend.png)
+*Figura 4.1: Interfaz Web Frontend del Travel Assistant mostrando la botonera de acciones rápidas (Estado, Gastos, Recordatorios, Herramientas MCP) y la caja de envío de mensajes conversacionales.*
 
 ![Figura 4.2: Bot de Telegram procesando una consulta multi-intención compleja que activa simultáneamente el registro de gasto (MCP Finanzas), creación de recordatorios (MCP Recordatorios) y recomendación de equipaje basada en clima real. Se observa además el bloqueo por guardarrail de seguridad en el turno anterior.](images/ui_telegram_bot.png)
 *Figura 4.2: Bot de Telegram procesando una consulta multi-intención compleja (registro de gasto vía MCP, recordatorios de salida/vuelta y recomendación de equipaje con clima en tiempo real) y demostración de bloqueo por guardarrail de seguridad.*
@@ -1121,6 +1156,8 @@ Las líneas de trabajo futuro identificadas se agrupan en dos categorías:
 - **Interfaz de voz.** Integración con APIs de Speech-to-Text y Text-to-Speech para permitir interacción por voz, especialmente útil en el contexto de movilidad durante el viaje.
 
 - **Despliegue en cloud.** Migración de la infraestructura Docker local a un entorno cloud (GCP Cloud Run, AWS Fargate) con CI/CD automatizado, HTTPS y autenticación multiusuario. La arquitectura de tres servicios Docker es directamente compatible con orquestadores cloud.
+
+- **Soporte multimoneda (Multi-currency) y conversión de divisas:** Ampliar el esquema de persistencia del MCP Finance Server para almacenar la divisa de cada transacción (USD, GBP, JPY, etc.) e integrar un servicio de tipos de cambio en tiempo real, permitiendo registrar gastos en cualquier moneda internacional con conversión automática a la divisa base del viaje, superando la limitación en Euros (€) del MVP actual.
 
 - **Sistema de notificaciones y alertas proactivas de recordatorios:** Implementación de un daemon/worker en segundo plano (usando Celery, Redis o APScheduler) que consulte periódicamente la base de datos de recordatorios del MCP Reminder Server. Este sistema enviará automáticamente mensajes *push* proactivos al usuario a través del bot de Telegram o alertas Web en tiempo real cuando se aproxime la fecha y hora programadas (por ejemplo, avisos de check-in de vuelos, tiempo estimado de salida al aeropuerto o alertas de eventos del viaje), transformando el asistente de un modelo puramente reactivo a uno proactivo.
 

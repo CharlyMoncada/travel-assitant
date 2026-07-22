@@ -285,3 +285,49 @@ class TravelAgentOrchestrator:
             "tool_response": last_agent_response,
             "message": final_message,
         }
+
+
+def format_agent_response(response: dict) -> dict:
+    """
+    Enriquece la respuesta del orquestador agregando la firma de metadatos del agente
+    y herramientas ejecutadas al campo 'message', de manera idéntica a la vista en Telegram.
+    """
+    if not isinstance(response, dict):
+        return response
+
+    res_copy = dict(response)
+    message = res_copy.get("message", "")
+
+    if res_copy.get("llm_used"):
+        agent_used = res_copy.get("agent_used", "unknown")
+        tool_name = res_copy.get("llm_tool", "unknown")
+
+        agent_names = {
+            "supervisor": "Supervisor (Router)",
+            "finance": "Finance Specialist",
+            "reminder": "Reminder Specialist",
+            "general": "General Specialist / RAG",
+            "global_guardrail": "Global Guardrail",
+        }
+        agent_display = agent_names.get(agent_used, str(agent_used).capitalize())
+
+        tools_executed = []
+        tool_resp = res_copy.get("tool_response")
+
+        if isinstance(tool_resp, dict) and "messages" in tool_resp:
+            for msg in tool_resp["messages"]:
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tc in msg.tool_calls:
+                        tools_executed.append(
+                            tc.get("name") if isinstance(tc, dict) else getattr(tc, "name", str(tc))
+                        )
+
+        signature = f"🤖 Agent: {agent_display}"
+        if tools_executed:
+            signature += f"\n🛠️ MCP/Local Tools: {', '.join(tools_executed)}"
+        else:
+            signature += f"\n🛠️ Flow: {tool_name}"
+
+        res_copy["message"] = f"{message}\n\n({signature})"
+
+    return res_copy

@@ -19,6 +19,7 @@ Justificación del diseño híbrido:
 from __future__ import annotations
 
 import logging
+import os
 import re
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -158,7 +159,13 @@ async def check_input_guardrail(text: str) -> tuple[bool, bool, str | None]:
 
     # Etapa 2 — verificación semántica LLM
     try:
-        llm = ChatOpenAI(model=get_openai_model(), temperature=0.0)
+        timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
+        llm = ChatOpenAI(
+            model=get_openai_model(),
+            temperature=0.0,
+            request_timeout=timeout_val,
+            max_retries=1,
+        )
         structured_llm = llm.with_structured_output(GuardrailDecision)
 
         decision: GuardrailDecision = await structured_llm.ainvoke([
