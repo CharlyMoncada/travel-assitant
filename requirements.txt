@@ -18,3 +18,4 @@ langsmith
 langdetect
 langchain
 langchain-openai
+colorama
