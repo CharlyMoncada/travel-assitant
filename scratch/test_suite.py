@@ -3002,3 +3002,57 @@ class TestMCPConnectivity(unittest.TestCase):
         self.assertTrue(has_reminder, "El servidor MCP de recordatorios en el puerto 8003 está caído o es inalcanzable")
 
 
+class TestSystemPromptsOptimization(unittest.TestCase):
+    """Pruebas unitarias integradas para validar tamaño y directivas de los prompts optimizados."""
+
+    def test_supervisor_prompt_size_and_content(self):
+        from app.agents.supervisor.prompts import SUPERVISOR_SYSTEM_PROMPT
+        self.assertLess(len(SUPERVISOR_SYSTEM_PROMPT), 2500)
+        self.assertIn("general", SUPERVISOR_SYSTEM_PROMPT)
+        self.assertIn("finance", SUPERVISOR_SYSTEM_PROMPT)
+        self.assertIn("reminder", SUPERVISOR_SYSTEM_PROMPT)
+        self.assertIn("recommender", SUPERVISOR_SYSTEM_PROMPT)
+
+    def test_finance_prompt_size_and_content(self):
+        from app.agents.finance.prompts import get_finance_system_prompt
+        prompt = get_finance_system_prompt()
+        self.assertLess(len(prompt), 2500)
+        self.assertIn("CURRENCY DIRECTIVE", prompt)
+        self.assertIn("Euros (€)", prompt)
+
+    def test_reminder_prompt_size_and_content(self):
+        from app.agents.reminder.prompts import get_reminder_system_prompt
+        prompt = get_reminder_system_prompt()
+        self.assertLess(len(prompt), 2500)
+        self.assertIn("query_reminders", prompt)
+        self.assertIn("record_reminder", prompt)
+
+    def test_general_prompt_size_and_content(self):
+        from app.agents.general.prompts import get_general_system_prompt
+        prompt = get_general_system_prompt()
+        self.assertLess(len(prompt), 1600)
+        self.assertIn("rules", prompt)
+        self.assertIn("travel_search", prompt)
+        self.assertIn("European", prompt)
+
+    def test_recommender_prompt_size_and_content(self):
+        from app.agents.recommender.prompts import get_recommender_system_prompt
+        prompt = get_recommender_system_prompt()
+        self.assertLess(len(prompt), 2500)
+        self.assertIn("TOOLS", prompt)
+        self.assertIn("OUTPUT FORMAT", prompt)
+        self.assertIn("CLASSIFICATION RULES", prompt)
+        self.assertTrue("max 5" in prompt or "maximum 5" in prompt)
+
+    def test_date_resolution_directives(self):
+        from app.utils.date_resolution import (
+            get_current_date_resolution_context,
+            get_date_resolution_prompt_directives,
+        )
+        ctx = get_current_date_resolution_context()
+        directives = get_date_resolution_prompt_directives(ctx)
+        self.assertLess(len(directives), 500)
+        self.assertIn("DATE RESOLUTION", directives)
+
+
+
