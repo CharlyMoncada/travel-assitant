@@ -137,7 +137,20 @@ class GuardrailDecision(BaseModel):
     )
 
 
+# Whitelist determinista de expresiones triviales y saludos benignos conocidos.
+# Permite dar paso instantáneo (0 ms latencia) sin riesgo de seguridad ni inyección de prompts.
+_TRIVIAL_BENIGN_INPUTS: set[str] = {
+    "hola", "buenos dias", "buenos días", "buenas tardes", "buenas noches",
+    "que tal", "qué tal", "como estas", "cómo estás", "gracias", "muchas gracias",
+    "ok", "okay", "vale", "perfecto", "entendido", "de acuerdo", "adios", "adiós",
+    "chao", "hasta luego", "si", "sí", "no", "confirmar", "proceder", "hacerlo",
+    "hello", "hi", "good morning", "good afternoon", "good evening", "how are you",
+    "thank you", "thanks", "thanks a lot", "bye", "goodbye", "yes", "confirm", "proceed"
+}
+
+
 async def check_input_guardrail(text: str) -> tuple[bool, bool, str | None]:
+
     """
     Verificación completa de guardarraíl de entrada híbrido.
 
