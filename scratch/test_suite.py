@@ -3002,16 +3002,31 @@ class TestMCPConnectivity(unittest.TestCase):
         self.assertTrue(has_reminder, "El servidor MCP de recordatorios en el puerto 8003 está caído o es inalcanzable")
 
 
-class TestSystemPromptsOptimization(unittest.TestCase):
-    """Pruebas unitarias integradas para validar tamaño y directivas de los prompts optimizados."""
+class TestSystemPromptsOptimization(unittest.IsolatedAsyncioTestCase):
+    """Pruebas unitarias integradas para validar tamaño, directivas y ejecución mock de prompts optimizados."""
 
     def test_supervisor_prompt_size_and_content(self):
-        from app.agents.supervisor.prompts import SUPERVISOR_SYSTEM_PROMPT
-        self.assertLess(len(SUPERVISOR_SYSTEM_PROMPT), 2500)
+        from app.agents.supervisor.prompts import SUPERVISOR_SYSTEM_PROMPT, MEMORY_RULE
+        self.assertLess(len(SUPERVISOR_SYSTEM_PROMPT), 2000)
+        self.assertEqual(MEMORY_RULE, "")
         self.assertIn("general", SUPERVISOR_SYSTEM_PROMPT)
         self.assertIn("finance", SUPERVISOR_SYSTEM_PROMPT)
         self.assertIn("reminder", SUPERVISOR_SYSTEM_PROMPT)
         self.assertIn("recommender", SUPERVISOR_SYSTEM_PROMPT)
+
+    async def test_supervisor_mock_execution(self):
+        from unittest.mock import AsyncMock, MagicMock
+        from app.agents.supervisor.agent import run_supervisor, RoutingDecision
+
+        mock_llm = MagicMock()
+        mock_structured_llm = MagicMock()
+        mock_decision = RoutingDecision(routes=["finance"], response=None)
+        mock_structured_llm.ainvoke = AsyncMock(return_value=mock_decision)
+        mock_llm.with_structured_output.return_value = mock_structured_llm
+
+        routes, response_text = await run_supervisor(mock_llm, [], "mis gastos de hoy")
+        self.assertEqual(routes, ["finance"])
+        self.assertEqual(response_text, "")
 
     def test_finance_prompt_size_and_content(self):
         from app.agents.finance.prompts import get_finance_system_prompt
@@ -3053,6 +3068,7 @@ class TestSystemPromptsOptimization(unittest.TestCase):
         directives = get_date_resolution_prompt_directives(ctx)
         self.assertLess(len(directives), 500)
         self.assertIn("DATE RESOLUTION", directives)
+
 
 
 
