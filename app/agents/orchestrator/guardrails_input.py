@@ -139,19 +139,22 @@ class GuardrailDecision(BaseModel):
 
 async def check_input_guardrail(text: str) -> tuple[bool, bool, str | None]:
     """
-    Verificación completa del guardarraíl híbrido.
+    Verificación completa de guardarraíl de entrada híbrido.
 
     Retorna:
         (lang_ok, is_safe, block_reason)
-        - lang_ok: False si el mensaje está en un idioma no admitido.
-        - is_safe: False si se detecta una inyección de prompt.
-        - block_reason: cadena de texto legible explicando el bloqueo, o None si todo está bien.
 
     Flujo:
-        1. Prefiltro regex (instantáneo, sin llamada a la API).
-        2. Clasificador semántico LLM (asíncrono, salida estructurada).
-        3. En caso de error de API del LLM: registrar advertencia y permitir el paso (fail-open).
+        1. Verificación determinista en Lista Blanca (saludos/expresiones triviales conocidas).
+        2. Prefiltro regex (instantáneo, sin llamada a la API).
+        3. Clasificador semántico LLM (asíncrono, salida estructurada).
+        4. En caso de error de API del LLM: registrar advertencia y permitir el paso (fail-open).
     """
+    # Etapa 0 — Lista blanca determinista para frases benignas conocidas (0 ms, 100% seguro)
+    normalized_input = text.strip().lower().strip(".!?,:;")
+    if normalized_input in _TRIVIAL_BENIGN_INPUTS:
+        return True, True, None
+
     # Etapa 1 — prefiltro regex
     is_safe_regex, matched = _check_obvious_patterns(text)
     if not is_safe_regex:
@@ -164,7 +167,7 @@ async def check_input_guardrail(text: str) -> tuple[bool, bool, str | None]:
             model=get_openai_model(),
             temperature=0.0,
             request_timeout=timeout_val,
-            max_retries=1,
+            max_retries=0,
         )
         structured_llm = llm.with_structured_output(GuardrailDecision)
 
