@@ -2,6 +2,8 @@ import asyncio
 import logging
 import threading
 
+from app.utils.logger import log_user_message
+
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, MessageHandler, filters
 from telegram.request import HTTPXRequest
@@ -79,6 +81,7 @@ class TelegramBotService:
         try:
             text = update.message.text or ""
             logger.info("Telegram bot received text message from chat %s: '%s'", chat_id, text)
+            log_user_message(logger, ">>> [Telegram %s] %s", chat_id, text)
             
             raw_response = await self.router.handle_message(text, thread_id=chat_id)
             response = format_agent_response(raw_response)

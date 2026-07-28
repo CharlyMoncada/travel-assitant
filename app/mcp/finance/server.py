@@ -1,7 +1,6 @@
 import os
 import json
 import uvicorn
-import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server import Server
@@ -17,9 +16,10 @@ from app.services.persistence.expense_persistence import (
 )
 from .tools import EXPENSE_TOOLS
 
-# Configure logs
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("finance_server")
+from app.utils.logger import setup_logging, get_logger
+
+setup_logging()
+logger = get_logger("finance_server")
 
 app = FastAPI(
     title="Travel Assistant - Finance MCP Server",
