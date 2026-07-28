@@ -156,20 +156,33 @@ class OutputIntegrityDecision(BaseModel):
     )
 
 
+# Whitelist determinista de respuestas triviales y confirmaciones benignas conocidas.
+_TRIVIAL_BENIGN_OUTPUTS: set[str] = {
+    "de nada", "un placer", "de nada, ¡un placer!", "¡de nada!",
+    "you're welcome", "my pleasure", "happy to help!", "¡hasta luego!",
+    "gasto registrado", "recordatorio creado", "gasto eliminado", "recordatorio eliminado",
+    "gasto modificado", "recordatorio modificado"
+}
+
+
 async def check_output_integrity(text: str) -> tuple[bool, str | None]:
     """
     Verificación completa de integridad de salida híbrida.
 
     Retorna:
         (is_clean, leak_type)
-        - is_clean: False si se detectó una fuga.
-        - leak_type: cadena que identifica el tipo de fuga, o None si está limpio.
 
     Flujo:
-        1. Prefiltro regex (instantáneo, sin llamada a la API).
-        2. Inspector semántico LLM (asíncrono, salida estructurada).
-        3. En caso de error de API del LLM: registrar advertencia y permitir la respuesta (fail-open).
+        1. Verificación determinista en Lista Blanca para respuestas breves benignas.
+        2. Prefiltro regex (instantáneo, sin llamada a la API).
+        3. Inspector semántico LLM (asíncrono, salida estructurada).
+        4. En caso de error de API del LLM: registrar advertencia y permitir la respuesta (fail-open).
     """
+    # Etapa 0 — Lista blanca determinista para frases benignas conocidas (0 ms, 100% seguro)
+    normalized_output = text.strip().lower().strip(".!?,:;")
+    if normalized_output in _TRIVIAL_BENIGN_OUTPUTS:
+        return True, None
+
     # Etapa 1 — prefiltro regex
     is_clean_regex, regex_leak_type = _check_output_patterns(text)
     if not is_clean_regex:
@@ -182,7 +195,7 @@ async def check_output_integrity(text: str) -> tuple[bool, str | None]:
             model=get_openai_model(),
             temperature=0.0,
             request_timeout=timeout_val,
-            max_retries=1,
+            max_retries=0,
         )
         structured_llm = llm.with_structured_output(OutputIntegrityDecision)
 
@@ -207,3 +220,5 @@ async def check_output_integrity(text: str) -> tuple[bool, str | None]:
             "LLM output guardrail API error — failing open (response allowed): %s", exc
         )
         return True, None
+
+
