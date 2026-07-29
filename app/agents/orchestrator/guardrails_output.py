@@ -135,12 +135,20 @@ CLASSIFY AS NOT CLEAN (is_clean=false) if the response contains:
    question.
 
 4. PII FROM OTHER SESSIONS: user data (names, expenses, reminders, preferences) that
-   clearly belongs to a different conversation session.
+   clearly belongs to a different conversation session or a different user account.
 
 CLASSIFY AS CLEAN (is_clean=true) if the response is:
 - A normal answer about travel, hotels, flights, weather, packing, expenses, or reminders.
 - A greeting, clarification, or apology that doesn't reveal internal information.
 - An explanation of the assistant's general capabilities (NOT implementation specifics).
+- A list of expenses or reminders for multiple destinations (Rome, Berlin, NYC, etc.) —
+  a single user can have many trips planned simultaneously; this is NOT cross-session PII.
+
+IMPORTANT — cross_session_pii means data from a DIFFERENT USER, not data about multiple
+trips or destinations from the SAME user. Only flag it when the response contains
+information that clearly identifies someone other than the person being served
+(e.g. a different name, a different account ID, or data that is completely
+unrelated to the current user's own travel activity).
 
 When in doubt, classify as clean to avoid blocking legitimate responses.
 """
