@@ -56,12 +56,92 @@ Se ampliaron los patrones regex para cubrir:
 
 Aunque mejoró la cobertura, seguía siendo un **enfoque reactivo**: solo bloqueaba patrones ya conocidos.
 
-### Versión 3 (rama `llm_guardrails`, actual): Híbrido regex + LLM ← 📍 Actual
+### Versión 3 (rama `llm_guardrails`): Híbrido regex + LLM
 
 Se adoptó un **diseño en dos etapas** que combina lo mejor de ambos mundos:
 
 1. **Pre-filtro regex ultrarrápido** para patrones sin ambigüedad.
 2. **Clasificador LLM semántico** para todo lo que requiera comprensión contextual.
+
+### Versión 4 (rama `fixPrompt`): Optimización de rendimiento y corrección de falsos positivos ← 📍 Actual
+
+A partir de las pruebas con el asistente en producción se detectaron dos problemas independientes que se resolvieron en esta versión:
+
+#### 4.1 Singleton del cliente LLM
+
+**Problema:** `ChatOpenAI` se instanciaba de nuevo en cada mensaje dentro de `check_input_guardrail` y `check_output_integrity`. Cada instanciación implica:
+- Inicialización del cliente HTTP interno (httpx)
+- Configuración TLS y autenticación
+- Construcción de la cadena `with_structured_output()`
+- Apertura de una nueva conexión TCP hacia los servidores de OpenAI
+
+Esto añadía entre **50 y 150 ms de overhead** por mensaje, incluso antes de la llamada real al modelo.
+
+**Solución:** Se extrae la construcción del cliente LLM a una función de fábrica privada que se ejecuta **una sola vez al importar el módulo**, almacenando el resultado en una variable a nivel de módulo:
+
+```python
+def _build_guardrail_llm():
+    """Construye el cliente LLM estructurado del guardarraíl. Llamado una sola vez."""
+    timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
+    llm = ChatOpenAI(model=get_openai_model(), temperature=0.0,
+                     request_timeout=timeout_val, max_retries=0)
+    return llm.with_structured_output(GuardrailDecision)
+
+_GUARDRAIL_STRUCTURED_LLM = _build_guardrail_llm()   # ← singleton
+```
+
+La función `check_input_guardrail` pasa de crear la instancia por llamada a reutilizar el singleton:
+
+```python
+# Antes (por cada mensaje):
+llm = ChatOpenAI(...)
+structured_llm = llm.with_structured_output(GuardrailDecision)
+decision = await structured_llm.ainvoke([...])
+
+# Después (singleton, creado una sola vez al importar):
+decision = await _GUARDRAIL_STRUCTURED_LLM.ainvoke([...])
+```
+
+El mismo patrón se aplica en el guardarrail de salida con `_OUTPUT_GUARDRAIL_STRUCTURED_LLM`.
+
+**Beneficio principal:** reutilización del **pool de conexiones TCP** hacia OpenAI (HTTP Keep-Alive), eliminando el handshake TLS por mensaje. Los tests se actualizan para parchear el singleton directamente (`patch("...guardrails_input._GUARDRAIL_STRUCTURED_LLM", mock)`) en lugar de parchear la clase.
+
+#### 4.2 Falso positivo en operaciones CRUD de usuario
+
+**Problema:** El prompt del clasificador LLM incluía la instrucción de bloquear *"comandos destructivos de sistema"* con el ejemplo `"borrar todas las bases de datos"`. El modelo generalizaba incorrectamente y bloqueaba comandos legítimos del usuario como `"Borra el gasto 2"` o `"Elimina el recordatorio 1"`.
+
+**Solución en dos niveles:**
+
+**Nivel 1 — Whitelist de prefijos CRUD** (0 ms, sin LLM): se añade la tupla `_BENIGN_CRUD_PREFIXES` con los prefijos de operaciones CRUD sobre datos del usuario. Si el mensaje empieza por alguno, se permite directamente:
+
+```python
+_BENIGN_CRUD_PREFIXES: tuple[str, ...] = (
+    "borra el gasto", "borra el recordatorio",
+    "elimina el gasto", "elimina el recordatorio",
+    "modifica el gasto", "modifica el recordatorio",
+    "delete expense", "delete reminder", ...
+)
+
+if any(normalized_input.startswith(prefix) for prefix in _BENIGN_CRUD_PREFIXES):
+    return True, True, None   # pass-through instantáneo
+```
+
+**Nivel 2 — Prompt más preciso**: se reescribe la regla del prompt del sistema para distinguir entre comandos destructivos a **nivel de sistema** (lo que hay que bloquear) y operaciones CRUD a **nivel de dato de usuario** (siempre legítimas):
+
+```
+# Antes (ambiguo, provocaba falsos positivos):
+- Attempts destructive system commands, bulk data deletion, database wiping
+  (e.g., "borrar todas las bases de datos", "drop database")
+
+# Después (explícito):
+- Attempts SYSTEM-LEVEL destructive commands targeting the underlying database,
+  filesystem, or configuration (e.g., "drop database", "wipe all data", "rm -rf").
+
+IMPORTANT — ALWAYS SAFE (never block these):
+- Deleting or modifying a single expense entry ("borra el gasto 2", "delete expense 1").
+- Deleting or modifying a single reminder ("borra el recordatorio 1").
+- Any CRUD operation on the user's own travel data.
+```
 
 ---
 

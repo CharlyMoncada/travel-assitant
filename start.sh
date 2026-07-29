@@ -16,6 +16,15 @@ fi
 
 mkdir -p logs
 
+# Matar instancias anteriores si las hay (evita el 409 Conflict de Telegram)
+echo "Stopping any previous instances..."
+pkill -9 -f "app.mcp.finance.server" 2>/dev/null || true
+pkill -9 -f "app.mcp.reminder.server" 2>/dev/null || true
+pkill -9 -f "app.main" 2>/dev/null || true
+# Esperar a que Telegram libere la conexión de polling anterior (~30s timeout)
+echo "Waiting for Telegram to release previous polling connection..."
+sleep 5
+
 echo "Starting Finance MCP Server  (port 8002)..."
 python -m app.mcp.finance.server > logs/finance.log 2>&1 &
 FINANCE_PID=$!
