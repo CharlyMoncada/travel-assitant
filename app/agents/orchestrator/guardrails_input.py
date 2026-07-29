@@ -75,6 +75,17 @@ _OBVIOUS_PATTERNS: list[tuple[str, re.Pattern]] = [
          r"\b(base64\s+decode|decodifica\s+esto|eval\s*\(|exec\s*\()\b",
          re.IGNORECASE,
      )),
+    # Operaciones destructivas masivas sobre datos del sistema
+    # Cubre variantes en ES/EN: "borra/elimina/drop/delete... todas/all... bases de datos/database(s)/tables/data"
+    ("mass_destructive_operation",
+     re.compile(
+         r"(borrar?|eliminar?|destruir?|destruye|vaciar?|limpiar?|drop|delete|wipe|purge|erase|clear|reset)"
+         r".{0,40}"
+         r"(tod[ao]s?\s+(\w+\s+)?(bases?\s+de\s+datos?|tablas?|datos?|registros?)"
+         r"|all\s+(\w+\s+)?(databases?|tables?|data|records?)"
+         r"|everything|todo\s+lo\s+que\s+tengo)",
+         re.IGNORECASE,
+     )),
 ]
 
 
