@@ -138,6 +138,27 @@ class GuardrailDecision(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Singleton del cliente LLM para el guardarraíl de entrada.
+# Se inicializa una sola vez al cargar el módulo, evitando el overhead
+# de crear una nueva instancia de ChatOpenAI en cada mensaje.
+# ---------------------------------------------------------------------------
+
+def _build_guardrail_llm():
+    """Construye el cliente LLM estructurado del guardarraíl. Llamado una sola vez."""
+    timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
+    llm = ChatOpenAI(
+        model=get_openai_model(),
+        temperature=0.0,
+        request_timeout=timeout_val,
+        max_retries=0,
+    )
+    return llm.with_structured_output(GuardrailDecision)
+
+
+_GUARDRAIL_STRUCTURED_LLM = _build_guardrail_llm()
+
+
 # Whitelist determinista de expresiones triviales y saludos benignos conocidos.
 # Permite dar paso instantáneo (0 ms latencia) sin riesgo de seguridad ni inyección de prompts.
 _TRIVIAL_BENIGN_INPUTS: set[str] = {
@@ -174,18 +195,9 @@ async def check_input_guardrail(text: str) -> tuple[bool, bool, str | None]:
     if not is_safe_regex:
         return True, False, matched  # idioma asumido OK, inyección bloqueada
 
-    # Etapa 2 — verificación semántica LLM
+    # Etapa 2 — verificación semántica LLM (usa el singleton del módulo)
     try:
-        timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
-        llm = ChatOpenAI(
-            model=get_openai_model(),
-            temperature=0.0,
-            request_timeout=timeout_val,
-            max_retries=0,
-        )
-        structured_llm = llm.with_structured_output(GuardrailDecision)
-
-        decision: GuardrailDecision = await structured_llm.ainvoke([
+        decision: GuardrailDecision = await _GUARDRAIL_STRUCTURED_LLM.ainvoke([
             SystemMessage(content=_GUARDRAIL_SYSTEM_PROMPT),
             HumanMessage(content=text),
         ])
