@@ -757,6 +757,14 @@ en un tiempo máximo de 5.0 s (`request_timeout=5.0`, configurable mediante
 el clasificador falla abierto (permite el mensaje) y registra una advertencia.
 ```
 
+**Versión 4 (rama `fixPrompt`): Optimización y corrección de falsos positivos**
+
+Las pruebas en producción revelaron dos problemas que se corrigieron en esta versión:
+
+*Singleton del cliente LLM.* En las versiones anteriores, `ChatOpenAI` se instanciaba de nuevo en cada llamada a `check_input_guardrail` y `check_output_integrity`. Cada instanciación abre una nueva conexión TCP hacia la API de OpenAI, repite el handshake TLS y reconstruye la cadena `with_structured_output()`. Esto añadía entre 50 y 150 ms de overhead por mensaje. La solución adopta el **patrón singleton a nivel de módulo**: la instancia se crea una sola vez al importar el módulo Python y se reutiliza en todas las llamadas subsiguientes, aprovechando el pool de conexiones HTTP Keep-Alive de la librería `httpx` subyacente.
+
+*Falso positivo en operaciones CRUD del usuario.* El prompt del clasificador LLM instruía a bloquear "comandos destructivos de sistema" con el ejemplo `"borrar todas las bases de datos"`. El modelo generalizaba incorrectamente y bloqueaba comandos legítimos como `"Borra el gasto 2"`. La corrección opera en dos niveles: (1) se añade una whitelist de prefijos CRUD (`_BENIGN_CRUD_PREFIXES`) que permite el paso inmediato de operaciones sobre datos propios del usuario sin llamar al LLM, y (2) se reescribe el prompt para distinguir explícitamente entre comandos a nivel de sistema (bloqueables) y operaciones CRUD sobre datos del usuario (siempre seguras), incluyendo ejemplos concretos de cada categoría.
+
 El guardarrail de salida sigue la misma arquitectura: pre-filtro regex para fugas técnicas (tracebacks Python, claves API en texto literal, marcadores del prompt del sistema) seguido de inspector LLM semántico para fugas indirectas (claves parciales, divulgación implícita de configuración interna, código de implementación embebido en la respuesta), compartiendo la misma política *fail-open* acotada a 5.0 segundos.
 
 **Justificación académica del enfoque híbrido:**

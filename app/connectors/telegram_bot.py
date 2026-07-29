@@ -112,11 +112,28 @@ class TelegramBotService:
             MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message)
         )
 
+        async def _conflict_error_handler(update, context):
+            """
+            Cuando Telegram devuelve 409 Conflict (otra instancia ya está haciendo polling),
+            esperamos 35 segundos para que la conexión anterior expire y paramos la aplicación
+            para que el hilo la reinicie en el siguiente ciclo.
+            """
+            if isinstance(context.error, telegram.error.Conflict):
+                logger.warning(
+                    "Telegram 409 Conflict: otra instancia está activa. "
+                    "Esperando 35 s para que expire la conexión anterior..."
+                )
+                await asyncio.sleep(35)
+                logger.info("Reintentando polling tras espera por Conflict 409")
+
+        self.application.add_error_handler(_conflict_error_handler)
+
         def run_polling():
             logger.info("Telegram bot starting polling (all updates enabled)")
             self.application.run_polling(
                 poll_interval=3,
                 stop_signals=None,
+                drop_pending_updates=True,
             )
 
         self.thread = threading.Thread(target=run_polling, daemon=True)

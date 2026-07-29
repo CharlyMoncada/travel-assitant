@@ -270,19 +270,15 @@ class TestHybridGuardrailLLM(unittest.IsolatedAsyncioTestCase):
     """
 
     async def _run(self, mock_decision, text="Test message"):
-        from app.agents.orchestrator.guardrails_input import (
-            check_input_guardrail,
-            GuardrailDecision,
-        )
+        from app.agents.orchestrator.guardrails_input import check_input_guardrail
         from unittest.mock import AsyncMock, patch, MagicMock
 
+        # Con el singleton, parcheamos directamente _GUARDRAIL_STRUCTURED_LLM
+        # en lugar de la clase ChatOpenAI (que ya fue llamada al importar el módulo).
         mock_structured_llm = MagicMock()
         mock_structured_llm.ainvoke = AsyncMock(return_value=mock_decision)
 
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value = mock_structured_llm
-
-        with patch("app.agents.orchestrator.guardrails_input.ChatOpenAI", return_value=mock_llm):
+        with patch("app.agents.orchestrator.guardrails_input._GUARDRAIL_STRUCTURED_LLM", mock_structured_llm):
             return await check_input_guardrail(text)
 
     # --------------------------------------------------------------------- #
@@ -364,12 +360,12 @@ class TestHybridGuardrailLLM(unittest.IsolatedAsyncioTestCase):
     async def test_api_error_fails_open(self):
         """Si la API del guardarraíl LLM está caída, el mensaje es permitido."""
         from app.agents.orchestrator.guardrails_input import check_input_guardrail
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch, AsyncMock, MagicMock
 
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.side_effect = Exception("API connection error")
+        mock_structured_llm = MagicMock()
+        mock_structured_llm.ainvoke = AsyncMock(side_effect=Exception("API connection error"))
 
-        with patch("app.agents.orchestrator.guardrails_input.ChatOpenAI", return_value=mock_llm):
+        with patch("app.agents.orchestrator.guardrails_input._GUARDRAIL_STRUCTURED_LLM", mock_structured_llm):
             lang_ok, is_safe, reason = await check_input_guardrail("Hola, buenos días")
 
         self.assertTrue(lang_ok, "Debe fallar abierto ante error de API")
@@ -379,12 +375,12 @@ class TestHybridGuardrailLLM(unittest.IsolatedAsyncioTestCase):
     async def test_timeout_error_fails_open(self):
         """Si la API del guardarraíl LLM da timeout ([Errno 60]), debe fallar abierto inmediatamente."""
         from app.agents.orchestrator.guardrails_input import check_input_guardrail
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch, AsyncMock, MagicMock
 
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.side_effect = TimeoutError("[Errno 60] Operation timed out")
+        mock_structured_llm = MagicMock()
+        mock_structured_llm.ainvoke = AsyncMock(side_effect=TimeoutError("[Errno 60] Operation timed out"))
 
-        with patch("app.agents.orchestrator.guardrails_input.ChatOpenAI", return_value=mock_llm):
+        with patch("app.agents.orchestrator.guardrails_input._GUARDRAIL_STRUCTURED_LLM", mock_structured_llm):
             lang_ok, is_safe, reason = await check_input_guardrail("dime mis gastos")
 
         self.assertTrue(lang_ok, "Debe fallar abierto ante timeout de API")
@@ -460,19 +456,14 @@ class TestHybridOutputGuardrailLLM(unittest.IsolatedAsyncioTestCase):
     """
 
     async def _run(self, mock_decision, text="A test response"):
-        from app.agents.orchestrator.guardrails_output import (
-            check_output_integrity,
-            OutputIntegrityDecision,
-        )
+        from app.agents.orchestrator.guardrails_output import check_output_integrity
         from unittest.mock import AsyncMock, patch, MagicMock
 
+        # Con el singleton, parcheamos directamente _OUTPUT_GUARDRAIL_STRUCTURED_LLM.
         mock_structured_llm = MagicMock()
         mock_structured_llm.ainvoke = AsyncMock(return_value=mock_decision)
 
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value = mock_structured_llm
-
-        with patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_llm):
+        with patch("app.agents.orchestrator.guardrails_output._OUTPUT_GUARDRAIL_STRUCTURED_LLM", mock_structured_llm):
             return await check_output_integrity(text)
 
     # ------------------------------------------------------------------ #
@@ -537,23 +528,20 @@ class TestHybridOutputGuardrailLLM(unittest.IsolatedAsyncioTestCase):
 
     async def test_regex_caught_before_llm(self):
         """Las respuestas capturadas por el prefiltro regex nunca llegan al mock del LLM."""
-        from app.agents.orchestrator.guardrails_output import (
-            check_output_integrity,
-            OutputIntegrityDecision,
-        )
+        from app.agents.orchestrator.guardrails_output import check_output_integrity
         from unittest.mock import AsyncMock, patch, MagicMock
 
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.return_value = MagicMock()
+        mock_structured_llm = MagicMock()
+        mock_structured_llm.ainvoke = AsyncMock()
 
-        with patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_llm):
+        with patch("app.agents.orchestrator.guardrails_output._OUTPUT_GUARDRAIL_STRUCTURED_LLM", mock_structured_llm):
             ok, reason = await check_output_integrity(
                 "Traceback (most recent call last): File 'x.py'"
             )
 
         self.assertFalse(ok)
         self.assertEqual(reason, "raw_error_leak")
-        mock_llm.with_structured_output.assert_not_called()
+        mock_structured_llm.ainvoke.assert_not_called()
 
     # ------------------------------------------------------------------ #
     # Fail-open: el error de la API del LLM no debe bloquear respuestas   #
@@ -562,12 +550,12 @@ class TestHybridOutputGuardrailLLM(unittest.IsolatedAsyncioTestCase):
     async def test_api_error_fails_open(self):
         """Si la API del inspector de salida LLM está caída, la respuesta es permitida."""
         from app.agents.orchestrator.guardrails_output import check_output_integrity
-        from unittest.mock import patch, MagicMock
+        from unittest.mock import patch, AsyncMock, MagicMock
 
-        mock_llm = MagicMock()
-        mock_llm.with_structured_output.side_effect = Exception("API unavailable")
+        mock_structured_llm = MagicMock()
+        mock_structured_llm.ainvoke = AsyncMock(side_effect=Exception("API unavailable"))
 
-        with patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_llm):
+        with patch("app.agents.orchestrator.guardrails_output._OUTPUT_GUARDRAIL_STRUCTURED_LLM", mock_structured_llm):
             ok, reason = await check_output_integrity("Tu vuelo sale el lunes a las 10:00.")
 
         self.assertTrue(ok, "Debe fallar abierto ante error de API")
@@ -1165,17 +1153,15 @@ class TestPipelineSupervisorDirectPath(unittest.IsolatedAsyncioTestCase):
         async def fake_input_guardrail(text):
             return True, True, None  # siempre pasar el guardarraíl de entrada
 
-        # Mockear el LLM dentro del guardarraíl de salida (respuestas limpias → is_clean=True)
-        mock_out_llm = unittest.mock.MagicMock()
+        # Mockear el singleton del guardarraíl de salida (respuestas limpias → is_clean=True)
         mock_out_structured = unittest.mock.MagicMock()
         mock_out_structured.ainvoke = AsyncMock(
             return_value=OutputIntegrityDecision(is_clean=True, leak_type=None)
         )
-        mock_out_llm.with_structured_output.return_value = mock_out_structured
 
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_input_guardrail), \
-             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output._OUTPUT_GUARDRAIL_STRUCTURED_LLM", mock_out_structured), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message"), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):
@@ -1246,17 +1232,15 @@ class TestPipelineAgentRoutingPath(unittest.IsolatedAsyncioTestCase):
             return True, True, None
 
         from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
-        mock_out_llm = unittest.mock.MagicMock()
         mock_out_structured = unittest.mock.MagicMock()
         mock_out_structured.ainvoke = AsyncMock(
             return_value=OutputIntegrityDecision(is_clean=True, leak_type=None)
         )
-        mock_out_llm.with_structured_output.return_value = mock_out_structured
 
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
              unittest.mock.patch.object(SubAgentExecutor, "run_specialized_agent", fake_run_agent), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_guardrail), \
-             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output._OUTPUT_GUARDRAIL_STRUCTURED_LLM", mock_out_structured), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message"), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):
@@ -1401,14 +1385,12 @@ class TestPipelineMessagePersistence(unittest.IsolatedAsyncioTestCase):
             return True, True, None
 
         from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
-        mock_out_llm = unittest.mock.MagicMock()
         mock_out_s = unittest.mock.MagicMock()
         mock_out_s.ainvoke = AsyncMock(return_value=OutputIntegrityDecision(is_clean=True, leak_type=None))
-        mock_out_llm.with_structured_output.return_value = mock_out_s
 
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_guardrail), \
-             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output._OUTPUT_GUARDRAIL_STRUCTURED_LLM", mock_out_s), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message", side_effect=fake_save), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):
@@ -2676,14 +2658,12 @@ class TestPipelineInputGuardrails(unittest.IsolatedAsyncioTestCase):
             return True, True, None  # all clear
 
         from app.agents.orchestrator.guardrails_output import OutputIntegrityDecision
-        mock_out_llm = unittest.mock.MagicMock()
         mock_out_s = unittest.mock.MagicMock()
         mock_out_s.ainvoke = AsyncMock(return_value=OutputIntegrityDecision(is_clean=True, leak_type=None))
-        mock_out_llm.with_structured_output.return_value = mock_out_s
 
         with unittest.mock.patch.object(orch_module, "run_supervisor", fake_supervisor), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.check_input_guardrail", fake_guardrail), \
-             unittest.mock.patch("app.agents.orchestrator.guardrails_output.ChatOpenAI", return_value=mock_out_llm), \
+             unittest.mock.patch("app.agents.orchestrator.guardrails_output._OUTPUT_GUARDRAIL_STRUCTURED_LLM", mock_out_s), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.save_message"), \
              unittest.mock.patch("app.agents.orchestrator.orchestrator.format_user_memories", return_value=""), \
              unittest.mock.patch("app.agents.orchestrator.history_manager.get_recent_messages", return_value=[]):

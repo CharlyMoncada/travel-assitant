@@ -156,6 +156,27 @@ class OutputIntegrityDecision(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Singleton del cliente LLM para el guardarraíl de salida.
+# Se inicializa una sola vez al cargar el módulo, evitando el overhead
+# de crear una nueva instancia de ChatOpenAI en cada respuesta.
+# ---------------------------------------------------------------------------
+
+def _build_output_guardrail_llm():
+    """Construye el inspector LLM estructurado de salida. Llamado una sola vez."""
+    timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
+    llm = ChatOpenAI(
+        model=get_openai_model(),
+        temperature=0.0,
+        request_timeout=timeout_val,
+        max_retries=0,
+    )
+    return llm.with_structured_output(OutputIntegrityDecision)
+
+
+_OUTPUT_GUARDRAIL_STRUCTURED_LLM = _build_output_guardrail_llm()
+
+
 # Whitelist determinista de respuestas triviales y confirmaciones benignas conocidas.
 _TRIVIAL_BENIGN_OUTPUTS: set[str] = {
     "de nada", "un placer", "de nada, ¡un placer!", "¡de nada!",
@@ -188,18 +209,9 @@ async def check_output_integrity(text: str) -> tuple[bool, str | None]:
     if not is_clean_regex:
         return False, regex_leak_type
 
-    # Etapa 2 — inspección semántica LLM
+    # Etapa 2 — inspección semántica LLM (usa el singleton del módulo)
     try:
-        timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
-        llm = ChatOpenAI(
-            model=get_openai_model(),
-            temperature=0.0,
-            request_timeout=timeout_val,
-            max_retries=0,
-        )
-        structured_llm = llm.with_structured_output(OutputIntegrityDecision)
-
-        decision: OutputIntegrityDecision = await structured_llm.ainvoke([
+        decision: OutputIntegrityDecision = await _OUTPUT_GUARDRAIL_STRUCTURED_LLM.ainvoke([
             SystemMessage(content=_OUTPUT_INSPECTOR_SYSTEM_PROMPT),
             HumanMessage(content=text),
         ])
