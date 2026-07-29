@@ -2,6 +2,8 @@ import asyncio
 import logging
 from typing import Any
 
+from app.utils.logger import log_user_message
+
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from langsmith import traceable
@@ -72,6 +74,7 @@ class TravelAgentOrchestrator:
             message,
             thread_id,
         )
+        log_user_message(logger, ">>> %s  [thread: %s]", message, thread_id)
 
         # Primero, intentar guardar el mensaje del usuario en el historial
         try:

@@ -7,11 +7,8 @@ from dotenv import load_dotenv
 project_root = Path(__file__).resolve().parent.parent
 load_dotenv(dotenv_path=project_root / ".env", override=True)
 
-# Configurar el logging raíz para mostrar logs INFO en la consola
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+from .utils.logger import setup_logging
+setup_logging()
 
 
 import asyncio

@@ -26,9 +26,9 @@ Asistente inteligente de viaje basado en IA Generativa que integra una arquitect
 - **⚙️ Validación Pydantic Dinámica & Caché TTL**:
   - Conversión automática al vuelo de los esquemas de parámetros JSON (`inputSchema`) de múltiples servidores MCP remotos en modelos tipados **Pydantic V2** (`create_model`).
   - Almacenamiento temporal en caché (TTL de 5 minutos) de las herramientas MCP descubiertas para optimizar la latencia conversacional.
-- **🛡️ Capa de Seguridad Global (Guardrails)** — arquitectura híbrida regex + LLM en entrada y salida:
-  - *Input Guardrails* (`check_input_guardrail`, async): diseño en **dos etapas**: pre-filtro regex ultrarrápido (< 1 ms) para patrones sin ambigüedad (tokens de plantilla, DAN/jailbreak, escalada de privilegios, ofuscación base64), seguido de un **clasificador LLM semántico** (`gpt-5-nano`, salida Pydantic estructurada) que detecta detección de idioma no soportado e inyecciones parafraseadas, bypass hipotético, roleplay jailbreak, many-shot conditioning. Política fail-open si la API no está disponible.
-  - *Output Guardrails* (`check_output_integrity`, async): mismo diseño híbrido — pre-filtro regex para fugas técnicas (trazas Python, keys literales, marcadores de prompt del sistema, markup de tool calls) + **inspector LLM semántico** para fugas indirectas (claves parciales, divulgación implícita de configuración interna, código de implementación). Política fail-open si la API no está disponible.
+- **🛡️ Capa de Seguridad Global (Guardrails)** — arquitectura híbrida regex + LLM en entrada y salida (v4, rama `fixPrompt`):
+  - *Input Guardrails* (`check_input_guardrail`, async): diseño en **tres etapas**: (1) whitelist instantánea de operaciones CRUD legítimas del usuario (`_BENIGN_CRUD_PREFIXES`), (2) pre-filtro regex ultrarrápido (< 1 ms) para patrones sin ambigüedad (tokens de plantilla, DAN/jailbreak, escalada de privilegios, ofuscación base64), y (3) **clasificador LLM semántico** (`gpt-5-nano`, salida Pydantic estructurada) que detecta idioma no soportado e inyecciones parafraseadas. Política fail-open si la API no está disponible. El cliente LLM se inicializa como **singleton de módulo** para reutilizar el pool de conexiones HTTP y reducir el overhead por mensaje.
+  - *Output Guardrails* (`check_output_integrity`, async): mismo diseño híbrido — pre-filtro regex para fugas técnicas (trazas Python, keys literales, marcadores de prompt del sistema, markup de tool calls) + **inspector LLM semántico singleton** para fugas indirectas. Política fail-open si la API no está disponible.
 - **💾 Persistencia e Integridad conversacional**: Persistencia estructurada de mensajes en SQLite (`data/travel_assistant.db`) con alineación de turnos (User-Assistant Symmetry) tolerante a fallos.
 - **🧠 Memoria de usuario a largo plazo**: `ChatMemoryService` detecta preferencias declarativas del usuario (aeropuerto favorito, presupuesto, estilo de viaje) y las persiste por `thread_id` para recuperarlas en conversaciones futuras.
 - **⚡ Sub-Agentes sin Estado (Stateless)**: Ejecución aislada y sin estado de sub-agentes (sin checkpointer interno), evitando contaminación de estado cruzado (cross-contamination) entre agentes y reduciendo drásticamente el consumo de tokens.
@@ -223,10 +223,14 @@ El sistema opera con **tres procesos concurrentes** para asegurar el desacoplami
 
 El script `start.sh` arranca los tres servicios en paralelo desde una única terminal, redirige los logs a `logs/` y los muestra en tiempo real. Presiona `Ctrl+C` para detener todos los procesos a la vez.
 
+El script **mata automáticamente** cualquier instancia previa antes de arrancar (usando `pkill -9`), lo que evita el error `409 Conflict` del bot de Telegram por instancias duplicadas.
+
 ```bash
 source .venv/bin/activate
 ./start.sh
 ```
+
+> **Nota:** Si el bot de Telegram sigue mostrando `409 Conflict` al arrancar (porque otra instancia externa sigue activa), el conector espera automáticamente 35 segundos y reintenta. Verás en los logs: `Telegram 409 Conflict: otra instancia está activa. Esperando 35 s...` seguido de `Reintentando polling tras espera por Conflict 409`.
 
 ---
 

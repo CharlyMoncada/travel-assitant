@@ -135,12 +135,20 @@ CLASSIFY AS NOT CLEAN (is_clean=false) if the response contains:
    question.
 
 4. PII FROM OTHER SESSIONS: user data (names, expenses, reminders, preferences) that
-   clearly belongs to a different conversation session.
+   clearly belongs to a different conversation session or a different user account.
 
 CLASSIFY AS CLEAN (is_clean=true) if the response is:
 - A normal answer about travel, hotels, flights, weather, packing, expenses, or reminders.
 - A greeting, clarification, or apology that doesn't reveal internal information.
 - An explanation of the assistant's general capabilities (NOT implementation specifics).
+- A list of expenses or reminders for multiple destinations (Rome, Berlin, NYC, etc.) —
+  a single user can have many trips planned simultaneously; this is NOT cross-session PII.
+
+IMPORTANT — cross_session_pii means data from a DIFFERENT USER, not data about multiple
+trips or destinations from the SAME user. Only flag it when the response contains
+information that clearly identifies someone other than the person being served
+(e.g. a different name, a different account ID, or data that is completely
+unrelated to the current user's own travel activity).
 
 When in doubt, classify as clean to avoid blocking legitimate responses.
 """
@@ -156,37 +164,62 @@ class OutputIntegrityDecision(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Singleton del cliente LLM para el guardarraíl de salida.
+# Se inicializa una sola vez al cargar el módulo, evitando el overhead
+# de crear una nueva instancia de ChatOpenAI en cada respuesta.
+# ---------------------------------------------------------------------------
+
+def _build_output_guardrail_llm():
+    """Construye el inspector LLM estructurado de salida. Llamado una sola vez."""
+    timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
+    llm = ChatOpenAI(
+        model=get_openai_model(),
+        temperature=0.0,
+        request_timeout=timeout_val,
+        max_retries=0,
+    )
+    return llm.with_structured_output(OutputIntegrityDecision)
+
+
+_OUTPUT_GUARDRAIL_STRUCTURED_LLM = _build_output_guardrail_llm()
+
+
+# Whitelist determinista de respuestas triviales y confirmaciones benignas conocidas.
+_TRIVIAL_BENIGN_OUTPUTS: set[str] = {
+    "de nada", "un placer", "de nada, ¡un placer!", "¡de nada!",
+    "you're welcome", "my pleasure", "happy to help!", "¡hasta luego!",
+    "gasto registrado", "recordatorio creado", "gasto eliminado", "recordatorio eliminado",
+    "gasto modificado", "recordatorio modificado"
+}
+
+
 async def check_output_integrity(text: str) -> tuple[bool, str | None]:
     """
     Verificación completa de integridad de salida híbrida.
 
     Retorna:
         (is_clean, leak_type)
-        - is_clean: False si se detectó una fuga.
-        - leak_type: cadena que identifica el tipo de fuga, o None si está limpio.
 
     Flujo:
-        1. Prefiltro regex (instantáneo, sin llamada a la API).
-        2. Inspector semántico LLM (asíncrono, salida estructurada).
-        3. En caso de error de API del LLM: registrar advertencia y permitir la respuesta (fail-open).
+        1. Verificación determinista en Lista Blanca para respuestas breves benignas.
+        2. Prefiltro regex (instantáneo, sin llamada a la API).
+        3. Inspector semántico LLM (asíncrono, salida estructurada).
+        4. En caso de error de API del LLM: registrar advertencia y permitir la respuesta (fail-open).
     """
+    # Etapa 0 — Lista blanca determinista para frases benignas conocidas (0 ms, 100% seguro)
+    normalized_output = text.strip().lower().strip(".!?,:;")
+    if normalized_output in _TRIVIAL_BENIGN_OUTPUTS:
+        return True, None
+
     # Etapa 1 — prefiltro regex
     is_clean_regex, regex_leak_type = _check_output_patterns(text)
     if not is_clean_regex:
         return False, regex_leak_type
 
-    # Etapa 2 — inspección semántica LLM
+    # Etapa 2 — inspección semántica LLM (usa el singleton del módulo)
     try:
-        timeout_val = float(os.getenv("GUARDRAIL_TIMEOUT", "5.0"))
-        llm = ChatOpenAI(
-            model=get_openai_model(),
-            temperature=0.0,
-            request_timeout=timeout_val,
-            max_retries=1,
-        )
-        structured_llm = llm.with_structured_output(OutputIntegrityDecision)
-
-        decision: OutputIntegrityDecision = await structured_llm.ainvoke([
+        decision: OutputIntegrityDecision = await _OUTPUT_GUARDRAIL_STRUCTURED_LLM.ainvoke([
             SystemMessage(content=_OUTPUT_INSPECTOR_SYSTEM_PROMPT),
             HumanMessage(content=text),
         ])
@@ -207,3 +240,5 @@ async def check_output_integrity(text: str) -> tuple[bool, str | None]:
             "LLM output guardrail API error — failing open (response allowed): %s", exc
         )
         return True, None
+
+

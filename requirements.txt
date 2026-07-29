@@ -12,9 +12,10 @@ langchain
 langchain-openai
 langgraph
 langgraph-checkpoint
-mcp
+mcp==1.2.0
 httpx
 langsmith
 langdetect
 langchain
 langchain-openai
+colorama

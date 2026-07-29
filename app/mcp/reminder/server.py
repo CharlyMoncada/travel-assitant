@@ -1,7 +1,6 @@
 import os
 import json
 import uvicorn
-import logging
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from mcp.server import Server
@@ -17,9 +16,10 @@ from app.services.persistence.reminder_persistence import (
 )
 from .tools import REMINDER_TOOLS
 
-# Configure logs
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("reminder_server")
+from app.utils.logger import setup_logging, get_logger
+
+setup_logging()
+logger = get_logger("reminder_server")
 
 app = FastAPI(
     title="Travel Assistant - Reminder MCP Server",
